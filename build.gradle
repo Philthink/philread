@@ -1,36 +1,23 @@
-plugins {
-    id 'java'
-}
-
-group = 'com.myreading'
-version = '1.0.0'
-
-sourceCompatibility = 1.8
-targetCompatibility = 1.8
-
-repositories {
-    mavenCentral()
-}
-
-sourceSets {
-    main {
-        java {
-            srcDirs = ['src/main/java']
-        }
+buildscript {
+    ext.kotlin_version = '1.9.24'
+    repositories {
+        google()
+        mavenCentral()
     }
-    test {
-        java {
-            srcDirs = ['src/test/java']
-        }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.5.2'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
     }
 }
 
-task smokeTest(type: JavaExec) {
-    group = 'verification'
-    description = 'Runs self-contained smoke tests without external dependencies.'
-    classpath = sourceSets.test.runtimeClasspath
-    main = 'com.myreading.tests.SmokeTests'
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
 }
 
-check.dependsOn smokeTest
+tasks.register('clean', Delete) {
+    delete rootProject.buildDir
+}
 
