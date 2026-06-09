@@ -1,0 +1,36 @@
+plugins {
+    id 'java'
+}
+
+group = 'com.myreading'
+version = '1.0.0'
+
+sourceCompatibility = 1.8
+targetCompatibility = 1.8
+
+repositories {
+    mavenCentral()
+}
+
+sourceSets {
+    main {
+        java {
+            srcDirs = ['src/main/java']
+        }
+    }
+    test {
+        java {
+            srcDirs = ['src/test/java']
+        }
+    }
+}
+
+task smokeTest(type: JavaExec) {
+    group = 'verification'
+    description = 'Runs self-contained smoke tests without external dependencies.'
+    classpath = sourceSets.test.runtimeClasspath
+    main = 'com.myreading.tests.SmokeTests'
+}
+
+check.dependsOn smokeTest
+
