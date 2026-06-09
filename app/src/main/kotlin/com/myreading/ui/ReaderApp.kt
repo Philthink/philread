@@ -322,7 +322,7 @@ private fun VerticalPageCanvas(
                 when (fragment) {
                     is LayoutFragment.Text -> drawText(
                         textMeasurer = textMeasurer,
-                        text = AnnotatedString(fragment.text),
+                        text = AnnotatedString(fragment.displayText),
                         style = TextStyle(
                             fontFamily = FontFamily.Serif,
                             fontSize = fragment.fontSize.sp,
@@ -338,11 +338,15 @@ private fun VerticalPageCanvas(
                             topLeft = Offset(fragment.x, fragment.y)
                         )
                         if (fragment.annotation.isNotEmpty()) {
+                            val annotationX = when (fragment.rubyPosition) {
+                                com.myreading.core.RubyPosition.Right, com.myreading.core.RubyPosition.Over -> fragment.x + fragment.fontSize * 0.72f
+                                com.myreading.core.RubyPosition.Under -> fragment.x - fragment.fontSize * 0.72f
+                            }
                             drawText(
                                 textMeasurer = textMeasurer,
                                 text = AnnotatedString(fragment.annotation),
                                 style = TextStyle(fontFamily = FontFamily.Serif, fontSize = (fragment.fontSize * 0.7f).sp),
-                                topLeft = Offset(fragment.x - fragment.fontSize * 0.7f, fragment.y)
+                                topLeft = Offset(annotationX, fragment.y)
                             )
                         }
                     }
@@ -376,8 +380,8 @@ object DemoBookFactory {
                     </style>
                   </head>
                   <body>
-                    <p>天地玄黃宇宙洪荒。<ruby>漢<rt>kan</rt></ruby>2026。</p>
-                    <p>日月盈昃辰宿列張。風吹草動，古意長存。</p>
+                    <p>天地玄黃宇宙洪荒。<ruby>漢<rt>kan</rt></ruby><span style="text-combine-upright: all;">2026</span>。</p>
+                    <p>日月盈昃辰宿列張。「古籍」之形，當隨竪排而定。</p>
                   </body>
                 </html>
             """.trimIndent(),

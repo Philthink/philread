@@ -20,27 +20,45 @@ data class LayoutSettings(
 
 data class LayoutFingerprint(val value: String)
 
+enum class RubyPosition {
+    Right,
+    Over,
+    Under
+}
+
+data class InlineStyleState(
+    val combineUpright: Boolean = false,
+    val combineUprightDigitsOnly: Boolean = false,
+    val combineUprightLimit: Int = 4,
+    val rubyPosition: RubyPosition = RubyPosition.Right,
+    val textOrientationUpright: Boolean = false,
+    val writingModeVertical: Boolean = true
+)
+
 sealed class LayoutFragment {
     abstract val unitId: String
 
     data class Text(
         override val unitId: String,
-        val text: String,
+        val sourceText: String,
+        val displayText: String,
         val x: Float,
         val y: Float,
         val fontSize: Float,
         val lineHeight: Float,
-        val combineUpright: Boolean = false
+        val combineUpright: Boolean = false,
+        val punctuation: Boolean = false
     ) : LayoutFragment()
 
     data class Ruby(
         override val unitId: String,
         val baseText: String,
-        val annotation: String,
+        val annotationText: String,
         val x: Float,
         val y: Float,
         val fontSize: Float,
-        val lineHeight: Float
+        val lineHeight: Float,
+        val rubyPosition: RubyPosition = RubyPosition.Right
     ) : LayoutFragment()
 
     data class Image(
@@ -80,8 +98,13 @@ class LayoutCache(private val capacity: Int = 16) {
         }
     }
 
-    @Synchronized fun get(key: String): PaginationResult? = cache[key]
-    @Synchronized fun put(key: String, value: PaginationResult) { cache[key] = value }
+    @Synchronized
+    fun get(key: String): PaginationResult? = cache[key]
+
+    @Synchronized
+    fun put(key: String, value: PaginationResult) {
+        cache[key] = value
+    }
 }
 
 class VerticalLayoutEngine(
@@ -104,9 +127,10 @@ class VerticalLayoutEngine(
         val columnsPerPage = max(1, floor((usableWidth + settings.columnGap) / (columnWidth + settings.columnGap)).toInt())
 
         val pages = mutableListOf<PageLayout>()
-        val fragments = mutableListOf<LayoutFragment>()
-        var currentColumnIndex = 0
-        var currentPageIndex = 0
+        var currentColumns = mutableListOf<ColumnLayout>()
+        var currentFragments = mutableListOf<LayoutFragment>()
+        var pageIndex = 0
+        var columnIndex = 0
         var usedHeight = 0f
 
         fun columnX(index: Int): Float {
@@ -114,89 +138,151 @@ class VerticalLayoutEngine(
         }
 
         fun flushColumn() {
-            if (fragments.isEmpty()) return
-            val page = pages.lastOrNull()
-            val column = ColumnLayout(
-                index = currentColumnIndex,
-                x = columnX(currentColumnIndex),
+            if (currentFragments.isEmpty()) return
+            currentColumns += ColumnLayout(
+                index = columnIndex,
+                x = columnX(columnIndex),
                 y = settings.marginTop,
                 width = columnWidth,
                 height = usableHeight,
-                fragments = fragments.toList()
+                fragments = currentFragments.toList()
             )
-            if (page == null || page.index != currentPageIndex) {
-                pages += PageLayout(currentPageIndex, listOf(column))
-            } else {
-                pages[pages.lastIndex] = page.copy(columns = page.columns + column)
-            }
-            fragments.clear()
+            currentFragments = mutableListOf()
         }
 
-        fun nextColumnOrPage() {
+        fun flushPage() {
+            if (currentColumns.isEmpty()) return
+            pages += PageLayout(pageIndex, currentColumns.toList())
+            currentColumns = mutableListOf()
+        }
+
+        fun newColumnOrPage() {
             flushColumn()
-            if (currentColumnIndex + 1 >= columnsPerPage) {
-                currentPageIndex += 1
-                currentColumnIndex = 0
+            if (columnIndex + 1 >= columnsPerPage) {
+                flushPage()
+                pageIndex += 1
+                columnIndex = 0
             } else {
-                currentColumnIndex += 1
+                columnIndex += 1
             }
             usedHeight = 0f
         }
 
         fun ensureSpace(advance: Float) {
             if (usedHeight > 0f && usedHeight + advance > usableHeight) {
-                nextColumnOrPage()
+                newColumnOrPage()
             }
         }
 
-        fun appendFragment(fragment: LayoutFragment, advance: Float) {
+        fun append(fragment: LayoutFragment, advance: Float) {
             ensureSpace(advance)
-            fragments += fragment.copyAt(columnX(currentColumnIndex), settings.marginTop + usedHeight)
+            val positioned = fragment.positionAt(columnX(columnIndex), settings.marginTop + usedHeight)
+            currentFragments += positioned
             usedHeight += advance
         }
 
-        fun walk(node: Node) {
+        fun walk(node: Node, inherited: InlineStyleState) {
             when (node.nodeType) {
                 Node.TEXT_NODE -> {
                     val text = normalizeWhitespace(node.textContent)
                     if (text.isNotEmpty()) {
-                        val unitId = "t${pages.size}_${currentColumnIndex}_${fragments.size}"
-                        tokenize(text, false).forEach { token ->
-                            val advance = tokenAdvance(token, false, settings)
-                            appendFragment(LayoutFragment.Text(unitId, token, 0f, 0f, settings.fontSize, settings.lineHeight, false), advance)
+                        val tokens = VerticalTypography.tokenize(text, inherited)
+                        tokens.forEachIndexed { index, token ->
+                            val unitId = "t$pageIndex$columnIndex${currentFragments.size}$index"
+                            append(
+                                LayoutFragment.Text(
+                                    unitId = unitId,
+                                    sourceText = token.source,
+                                    displayText = token.display,
+                                    x = 0f,
+                                    y = 0f,
+                                    fontSize = settings.fontSize,
+                                    lineHeight = settings.lineHeight,
+                                    combineUpright = token.combineUpright,
+                                    punctuation = token.punctuation
+                                ),
+                                token.advance(settings)
+                            )
                         }
                     }
                 }
+
                 Node.ELEMENT_NODE -> {
                     val element = node as Element
-                    when (XmlSupport.localName(element).lowercase()) {
+                    val localName = XmlSupport.localName(element).lowercase()
+                    val nextState = resolveStyle(element, stylesheet, inherited)
+                    when (localName) {
                         "br" -> {
                             usedHeight += settings.fontSize * settings.lineHeight
-                            if (usedHeight > usableHeight) nextColumnOrPage()
+                            if (usedHeight > usableHeight) newColumnOrPage()
                         }
+
                         "img" -> {
                             val href = element.getAttribute("src")
-                            val advance = max(settings.fontSize * settings.lineHeight * 2f, 48f)
-                            appendFragment(LayoutFragment.Image("i${pages.size}_${currentColumnIndex}_${fragments.size}", href, 0f, 0f, settings.fontSize * 2f, settings.fontSize * 2f), advance)
+                            val advance = max(settings.fontSize * settings.lineHeight * 2f, settings.fontSize * 2f)
+                            append(
+                                LayoutFragment.Image(
+                                    unitId = "i$pageIndex$columnIndex${currentFragments.size}",
+                                    resourceHref = href,
+                                    x = 0f,
+                                    y = 0f,
+                                    width = settings.fontSize * 2f,
+                                    height = settings.fontSize * 2f
+                                ),
+                                advance
+                            )
                         }
+
                         "ruby" -> {
-                            val ruby = parseRuby(element)
-                            val advance = settings.fontSize * settings.lineHeight
-                            appendFragment(LayoutFragment.Ruby("r${pages.size}_${currentColumnIndex}_${fragments.size}", ruby.base, ruby.annotation, 0f, 0f, settings.fontSize * 0.9f, settings.lineHeight), advance)
+                            val ruby = parseRuby(element, nextState)
+                            val advance = max(settings.fontSize * settings.lineHeight, settings.fontSize * 1.15f)
+                            append(
+                                LayoutFragment.Ruby(
+                                    unitId = "r$pageIndex$columnIndex${currentFragments.size}",
+                                    baseText = ruby.baseText,
+                                    annotationText = ruby.annotationText,
+                                    x = 0f,
+                                    y = 0f,
+                                    fontSize = settings.fontSize * 0.92f,
+                                    lineHeight = settings.lineHeight,
+                                    rubyPosition = ruby.rubyPosition
+                                ),
+                                advance
+                            )
                         }
+
                         "audio" -> Unit
+
                         else -> {
-                            if (isBlock(element) && usedHeight > 0f) nextColumnOrPage()
-                            for (child in XmlSupport.children(element)) walk(child)
-                            if (isBlock(element) && usedHeight > 0f) nextColumnOrPage()
+                            val blockElement = isBlockElement(element)
+                            if (blockElement && usedHeight > 0f) {
+                                usedHeight += settings.fontSize * settings.lineHeight * 0.5f
+                                if (usedHeight > usableHeight) {
+                                    newColumnOrPage()
+                                }
+                            }
+                            for (child in XmlSupport.children(element)) {
+                                walk(child, nextState)
+                            }
+                            if (blockElement && usedHeight > 0f) {
+                                usedHeight += settings.fontSize * settings.lineHeight * 0.35f
+                                if (usedHeight > usableHeight) {
+                                    newColumnOrPage()
+                                }
+                            }
                         }
                     }
                 }
             }
         }
 
-        for (child in XmlSupport.children(body)) walk(child)
+        val rootState = resolveStyle(body, stylesheet, InlineStyleState())
+        for (child in XmlSupport.children(body)) {
+            walk(child, rootState)
+        }
+
         flushColumn()
+        flushPage()
         return pages
     }
 
@@ -213,90 +299,341 @@ class VerticalLayoutEngine(
             append(settings.marginRight).append('|')
             append(settings.marginBottom).append('|')
             append(settings.marginLeft).append('|')
-            append(stylesheet.rules.joinToString(separator = ";") { it.selector + it.declarations.joinToString { d -> "${d.property}:${d.value}" } })
+            append(stylesheet.rules.joinToString(separator = ";") { rule ->
+                rule.selector + rule.declarations.joinToString(separator = ",") { declaration ->
+                    "${declaration.property}:${declaration.value}"
+                }
+            })
             append('|')
             append(chapter.content.hashCode())
         }
         return raw.hashCode().toString(16)
     }
 
-    private fun isBlock(element: Element): Boolean {
-        return XmlSupport.localName(element).lowercase() in setOf("p", "div", "section", "article", "aside", "blockquote", "li", "ul", "ol", "table", "tr", "td", "th", "h1", "h2", "h3", "h4", "h5", "h6")
-    }
-
-    private fun tokenize(text: String, combineUpright: Boolean): List<String> {
-        val tokens = mutableListOf<String>()
-        var index = 0
-        while (index < text.length) {
-            val cp = text.codePointAt(index)
-            val count = Character.charCount(cp)
-            when {
-                Character.isWhitespace(cp) -> {
-                    tokens += String(Character.toChars(cp))
-                    index += count
-                }
-                combineUpright && isAsciiAlnum(cp) -> {
-                    val start = index
-                    var consumed = 0
-                    while (index < text.length && consumed < 4) {
-                        val next = text.codePointAt(index)
-                        if (!isAsciiAlnum(next)) break
-                        index += Character.charCount(next)
-                        consumed++
-                    }
-                    tokens += text.substring(start, index)
-                }
-                else -> {
-                    tokens += String(Character.toChars(cp))
-                    index += count
-                }
-            }
-        }
-        return tokens
-    }
-
-    private fun tokenAdvance(token: String, combineUpright: Boolean, settings: LayoutSettings): Float {
-        if (token.isBlank()) return 0f
-        if (combineUpright && token.length <= 4 && token.all { it.isLetterOrDigit() }) {
-            return settings.fontSize * settings.lineHeight
-        }
-        val cp = token.codePointAt(0)
-        return when {
-            Character.isWhitespace(cp) -> settings.fontSize * settings.lineHeight * 0.33f
-            isAsciiAlnum(cp) -> settings.fontSize * settings.lineHeight * 0.5f
-            else -> settings.fontSize * settings.lineHeight
-        }
-    }
-
-    private fun isAsciiAlnum(codePoint: Int): Boolean {
-        return codePoint in '0'.code..'9'.code || codePoint in 'a'.code..'z'.code || codePoint in 'A'.code..'Z'.code
+    private fun isBlockElement(element: Element): Boolean {
+        return XmlSupport.localName(element).lowercase() in setOf(
+            "p", "div", "section", "article", "aside", "blockquote",
+            "li", "ul", "ol", "table", "tr", "td", "th",
+            "h1", "h2", "h3", "h4", "h5", "h6"
+        )
     }
 
     private fun normalizeWhitespace(value: String?): String {
-        return value?.replace('\u00A0', ' ')?.replace(Regex("\\s+"), " ")?.trim().orEmpty()
+        return value
+            ?.replace('\u00A0', ' ')
+            ?.replace(Regex("\\s+"), " ")
+            ?.trim()
+            .orEmpty()
     }
 
-    private data class RubyText(val base: String, val annotation: String)
+    private data class RubyText(
+        val baseText: String,
+        val annotationText: String,
+        val rubyPosition: RubyPosition
+    )
 
-    private fun parseRuby(element: Element): RubyText {
+    private fun parseRuby(element: Element, inherited: InlineStyleState): RubyText {
         val base = StringBuilder()
-        val rt = StringBuilder()
+        val annotation = StringBuilder()
         for (child in XmlSupport.children(element)) {
-            if (child.nodeType == Node.TEXT_NODE) {
-                base.append(normalizeWhitespace(child.textContent))
-            } else if (child.nodeType == Node.ELEMENT_NODE) {
-                val local = XmlSupport.localName(child).lowercase()
-                when (local) {
-                    "rt" -> rt.append(normalizeWhitespace(child.textContent))
-                    "rp" -> Unit
-                    else -> base.append(normalizeWhitespace(child.textContent))
+            when {
+                child.nodeType == Node.TEXT_NODE -> {
+                    base.append(normalizeWhitespace(child.textContent))
+                }
+
+                child.nodeType == Node.ELEMENT_NODE -> {
+                    val local = XmlSupport.localName(child).lowercase()
+                    when (local) {
+                        "rt" -> annotation.append(normalizeWhitespace(child.textContent))
+                        "rp" -> Unit
+                        "rb" -> base.append(normalizeWhitespace(child.textContent))
+                        else -> base.append(normalizeWhitespace(child.textContent))
+                    }
                 }
             }
         }
-        return RubyText(base.toString(), rt.toString())
+
+        return RubyText(
+            baseText = VerticalTypography.verticalize(base.toString()),
+            annotationText = normalizeWhitespace(annotation.toString()),
+            rubyPosition = inherited.rubyPosition
+        )
     }
 
-    private fun LayoutFragment.copyAt(x: Float, y: Float): LayoutFragment {
+    private fun resolveStyle(element: Element, stylesheet: Stylesheet, parent: InlineStyleState): InlineStyleState {
+        var state = parent
+
+        for (rule in stylesheet.rules) {
+            if (StyleMatcher.matches(rule.selector, element)) {
+                state = state.apply(rule.declarations)
+            }
+        }
+
+        val inlineDeclarations = parseInlineDeclarations(element.getAttribute("style"))
+        if (inlineDeclarations.isNotEmpty()) {
+            state = state.apply(inlineDeclarations)
+        }
+
+        return state
+    }
+
+    private fun parseInlineDeclarations(styleText: String): List<CssDeclaration> {
+        if (styleText.isBlank()) {
+            return emptyList()
+        }
+        return styleText
+            .split(';')
+            .mapNotNull { entry ->
+                val index = entry.indexOf(':')
+                if (index <= 0) return@mapNotNull null
+                val property = entry.substring(0, index).trim()
+                val value = entry.substring(index + 1).trim()
+                if (property.isEmpty() || value.isEmpty()) null else CssDeclaration(property, value)
+            }
+    }
+
+    private fun InlineStyleState.apply(declarations: List<CssDeclaration>): InlineStyleState {
+        var result = this
+        for (declaration in declarations) {
+            when (declaration.property.lowercase()) {
+                "text-combine-upright", "-webkit-text-combine" -> {
+                    val value = declaration.value.lowercase()
+                    result = when {
+                        value == "none" || value.isBlank() -> result.copy(
+                            combineUpright = false,
+                            combineUprightDigitsOnly = false,
+                            combineUprightLimit = 4
+                        )
+                        value.startsWith("digits") -> {
+                            val limit = Regex("""digits\s+(\d)""").find(value)?.groupValues?.getOrNull(1)?.toIntOrNull()?.coerceIn(2, 4) ?: 2
+                            result.copy(
+                                combineUpright = true,
+                                combineUprightDigitsOnly = true,
+                                combineUprightLimit = limit
+                            )
+                        }
+                        else -> result.copy(
+                            combineUpright = true,
+                            combineUprightDigitsOnly = false,
+                            combineUprightLimit = 4
+                        )
+                    }
+                }
+
+                "ruby-position" -> {
+                    result = result.copy(rubyPosition = when (declaration.value.lowercase()) {
+                        "over" -> RubyPosition.Over
+                        "under" -> RubyPosition.Under
+                        else -> RubyPosition.Right
+                    })
+                }
+
+                "text-orientation" -> {
+                    result = result.copy(textOrientationUpright = declaration.value.equals("upright", ignoreCase = true))
+                }
+
+                "writing-mode" -> {
+                    result = result.copy(writingModeVertical = declaration.value.lowercase().startsWith("vertical"))
+                }
+            }
+        }
+        return result
+    }
+
+    private object StyleMatcher {
+        fun matches(selector: String, element: Element): Boolean {
+            val normalized = selector.trim()
+            if (normalized.isEmpty() || normalized.contains(" ")) {
+                return false
+            }
+            if (normalized == "*") {
+                return true
+            }
+
+            val localName = XmlSupport.localName(element).lowercase()
+            val id = element.getAttribute("id")
+            val classes = element.getAttribute("class")
+                .split(Regex("\\s+"))
+                .filter { it.isNotBlank() }
+                .toSet()
+
+            return when {
+                normalized.startsWith("#") -> id == normalized.drop(1)
+                normalized.startsWith(".") -> classes.contains(normalized.drop(1))
+                normalized.contains("#") -> {
+                    val parts = normalized.split("#", limit = 2)
+                    localName == parts[0].lowercase() && id == parts[1]
+                }
+                normalized.contains(".") -> {
+                    val parts = normalized.split(".", limit = 2)
+                    localName == parts[0].lowercase() && classes.contains(parts[1])
+                }
+                else -> localName == normalized.lowercase()
+            }
+        }
+    }
+
+    private data class InlineToken(
+        val source: String,
+        val display: String,
+        val combineUpright: Boolean,
+        val punctuation: Boolean
+    ) {
+        fun advance(settings: LayoutSettings): Float {
+            if (source.isBlank()) {
+                return settings.fontSize * settings.lineHeight * 0.5f
+            }
+            return when {
+                combineUpright -> settings.fontSize * settings.lineHeight
+                punctuation -> settings.fontSize * settings.lineHeight * 0.92f
+                source.all { it.isWhitespace() } -> settings.fontSize * settings.lineHeight * 0.5f
+                VerticalTypography.isAsciiAlnum(source.codePointAt(0)) -> settings.fontSize * settings.lineHeight * 0.5f
+                else -> settings.fontSize * settings.lineHeight
+            }
+        }
+    }
+
+    private object VerticalTypography {
+        private val punctuationMap = mapOf(
+            '(' to '（',
+            ')' to '）',
+            '[' to '［',
+            ']' to '］',
+            '{' to '｛',
+            '}' to '｝',
+            '<' to '〈',
+            '>' to '〉',
+            ',' to '︐',
+            '.' to '︒',
+            ':' to '︓',
+            ';' to '︔',
+            '?' to '︖',
+            '!' to '︕',
+            '「' to '﹁',
+            '」' to '﹂',
+            '『' to '﹃',
+            '』' to '﹄',
+            '【' to '︻',
+            '】' to '︼',
+            '《' to '︽',
+            '》' to '︾',
+            '〔' to '︹',
+            '〕' to '︺',
+            '（' to '︵',
+            '）' to '︶',
+            '，' to '︐',
+            '。' to '︒',
+            '、' to '︑',
+            '：' to '︓',
+            '；' to '︔',
+            '？' to '︖',
+            '！' to '︕',
+            '—' to '︱',
+            '…' to '︙'
+        )
+
+        fun tokenize(text: String, style: InlineStyleState): List<InlineToken> {
+            val tokens = mutableListOf<InlineToken>()
+            var index = 0
+            while (index < text.length) {
+                val codePoint = text.codePointAt(index)
+                val charCount = Character.charCount(codePoint)
+
+                when {
+                    Character.isWhitespace(codePoint) -> {
+                        tokens += InlineToken(
+                            source = "　",
+                            display = "　",
+                            combineUpright = false,
+                            punctuation = false
+                        )
+                        index += charCount
+                    }
+
+                    style.combineUpright && shouldCombine(codePoint, style) -> {
+                        val start = index
+                        var consumed = 0
+                        while (index < text.length && consumed < style.combineUprightLimit) {
+                            val next = text.codePointAt(index)
+                            if (!shouldCombine(next, style)) {
+                                break
+                            }
+                            index += Character.charCount(next)
+                            consumed++
+                        }
+                        val raw = text.substring(start, index)
+                        tokens += InlineToken(
+                            source = raw,
+                            display = raw,
+                            combineUpright = true,
+                            punctuation = false
+                        )
+                    }
+
+                    isPunctuation(codePoint) -> {
+                        val raw = String(Character.toChars(codePoint))
+                        tokens += InlineToken(
+                            source = raw,
+                            display = verticalize(raw),
+                            combineUpright = false,
+                            punctuation = true
+                        )
+                        index += charCount
+                    }
+
+                    else -> {
+                        val raw = String(Character.toChars(codePoint))
+                        tokens += InlineToken(
+                            source = raw,
+                            display = verticalize(raw),
+                            combineUpright = false,
+                            punctuation = false
+                        )
+                        index += charCount
+                    }
+                }
+            }
+            return tokens
+        }
+
+        fun verticalize(text: String): String {
+            if (text.isEmpty()) {
+                return text
+            }
+            val builder = StringBuilder(text.length)
+            var index = 0
+            while (index < text.length) {
+                val codePoint = text.codePointAt(index)
+                val mapped = punctuationMap[codePoint.toChar()] ?: codePoint.toChar()
+                builder.append(mapped)
+                index += Character.charCount(codePoint)
+            }
+            return builder.toString()
+        }
+
+        fun isAsciiAlnum(codePoint: Int): Boolean {
+            return codePoint in '0'.code..'9'.code ||
+                codePoint in 'a'.code..'z'.code ||
+                codePoint in 'A'.code..'Z'.code
+        }
+
+        private fun shouldCombine(codePoint: Int, style: InlineStyleState): Boolean {
+            return if (style.combineUprightDigitsOnly) {
+                Character.isDigit(codePoint)
+            } else {
+                isAsciiAlnum(codePoint)
+            }
+        }
+
+        private fun isPunctuation(codePoint: Int): Boolean {
+            return when (codePoint.toChar()) {
+                ',', '.', ':', ';', '!', '?', '(', ')', '[', ']', '{', '}', '<', '>', '、', '。', '，', '：', '；', '？', '！', '「', '」', '『', '』', '《', '》', '（', '）', '—', '…' -> true
+                else -> false
+            }
+        }
+    }
+
+    private fun LayoutFragment.positionAt(x: Float, y: Float): LayoutFragment {
         return when (this) {
             is LayoutFragment.Text -> copy(x = x, y = y)
             is LayoutFragment.Ruby -> copy(x = x, y = y)
