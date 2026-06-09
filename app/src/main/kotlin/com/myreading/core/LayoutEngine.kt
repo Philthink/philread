@@ -30,7 +30,7 @@ data class InlineStyleState(
     val combineUpright: Boolean = false,
     val combineUprightDigitsOnly: Boolean = false,
     val combineUprightLimit: Int = 4,
-    val rubyPosition: RubyPosition = RubyPosition.Right,
+    val rubyPosition: RubyPosition? = null,
     val textOrientationUpright: Boolean = false,
     val writingModeVertical: Boolean = true
 )
@@ -47,18 +47,25 @@ sealed class LayoutFragment {
         val fontSize: Float,
         val lineHeight: Float,
         val combineUpright: Boolean = false,
-        val punctuation: Boolean = false
+        val punctuation: Boolean = false,
+        val textOrientationUpright: Boolean = false
     ) : LayoutFragment()
 
     data class Ruby(
         override val unitId: String,
-        val baseText: String,
+        val baseFragments: List<Text>,
         val annotationText: String,
+        val annotationDisplayText: String,
         val x: Float,
         val y: Float,
-        val fontSize: Float,
-        val lineHeight: Float,
-        val rubyPosition: RubyPosition = RubyPosition.Right
+        val baseFontSize: Float,
+        val baseLineHeight: Float,
+        val annotationFontSize: Float,
+        val annotationLineHeight: Float,
+        val annotationX: Float,
+        val annotationY: Float,
+        val rubyPosition: RubyPosition = RubyPosition.Right,
+        val flowAdvance: Float
     ) : LayoutFragment()
 
     data class Image(
@@ -199,7 +206,8 @@ class VerticalLayoutEngine(
                                     fontSize = settings.fontSize,
                                     lineHeight = settings.lineHeight,
                                     combineUpright = token.combineUpright,
-                                    punctuation = token.punctuation
+                                    punctuation = token.punctuation,
+                                    textOrientationUpright = token.textOrientationUpright
                                 ),
                                 token.advance(settings)
                             )
@@ -234,21 +242,15 @@ class VerticalLayoutEngine(
                         }
 
                         "ruby" -> {
-                            val ruby = parseRuby(element, nextState)
-                            val advance = max(settings.fontSize * settings.lineHeight, settings.fontSize * 1.15f)
-                            append(
-                                LayoutFragment.Ruby(
-                                    unitId = "r$pageIndex$columnIndex${currentFragments.size}",
-                                    baseText = ruby.baseText,
-                                    annotationText = ruby.annotationText,
-                                    x = 0f,
-                                    y = 0f,
-                                    fontSize = settings.fontSize * 0.92f,
-                                    lineHeight = settings.lineHeight,
-                                    rubyPosition = ruby.rubyPosition
-                                ),
-                                advance
+                            val ruby = layoutRuby(
+                                element = element,
+                                inherited = nextState,
+                                settings = settings,
+                                x = columnX(columnIndex),
+                                y = settings.marginTop + usedHeight,
+                                unitId = "r$pageIndex$columnIndex${currentFragments.size}"
                             )
+                            append(ruby.fragment, ruby.advance)
                         }
 
                         "audio" -> Unit
@@ -354,10 +356,111 @@ class VerticalLayoutEngine(
         }
 
         return RubyText(
-            baseText = VerticalTypography.verticalize(base.toString()),
+            baseText = normalizeWhitespace(base.toString()),
             annotationText = normalizeWhitespace(annotation.toString()),
-            rubyPosition = inherited.rubyPosition
+            rubyPosition = inherited.rubyPosition ?: if (inherited.writingModeVertical) RubyPosition.Right else RubyPosition.Over
         )
+    }
+
+    private data class RubyLayout(
+        val fragment: LayoutFragment.Ruby,
+        val advance: Float
+    )
+
+    private fun layoutRuby(
+        element: Element,
+        inherited: InlineStyleState,
+        settings: LayoutSettings,
+        x: Float,
+        y: Float,
+        unitId: String
+    ): RubyLayout {
+        val ruby = parseRuby(element, inherited)
+        val baseTokens = VerticalTypography.tokenize(ruby.baseText, inherited)
+        val baseFragments = mutableListOf<LayoutFragment.Text>()
+        var baseAdvance = 0f
+        for ((index, token) in baseTokens.withIndex()) {
+            val fragment = LayoutFragment.Text(
+                unitId = "$unitId-b$index",
+                sourceText = token.source,
+                displayText = token.display,
+                x = x,
+                y = y + baseAdvance,
+                fontSize = settings.fontSize,
+                lineHeight = settings.lineHeight,
+                combineUpright = token.combineUpright,
+                punctuation = token.punctuation,
+                textOrientationUpright = token.textOrientationUpright
+            )
+            baseFragments += fragment
+            baseAdvance += token.advance(settings)
+        }
+
+        val annotationFontSize = rubyAnnotationFontSize(ruby.annotationText, settings)
+        val annotationLineHeight = max(settings.lineHeight, 1.05f)
+        val annotationHeight = annotationFontSize * annotationLineHeight
+        val gap = max(2f, settings.fontSize * 0.12f)
+        val annotationX = when (ruby.rubyPosition) {
+            RubyPosition.Right -> x + settings.fontSize * 0.78f
+            RubyPosition.Over -> x
+            RubyPosition.Under -> x
+        }
+        val annotationY = when (ruby.rubyPosition) {
+            RubyPosition.Right -> y + max(0f, (baseAdvance - annotationHeight) / 2f)
+            RubyPosition.Over -> y - annotationHeight - gap
+            RubyPosition.Under -> y + baseAdvance + gap
+        }
+        val flowAdvance = max(baseAdvance, settings.fontSize * settings.lineHeight)
+
+        return RubyLayout(
+            fragment = LayoutFragment.Ruby(
+                unitId = unitId,
+                baseFragments = baseFragments,
+                annotationText = ruby.annotationText,
+                annotationDisplayText = ruby.annotationText,
+                x = x,
+                y = y,
+                baseFontSize = settings.fontSize,
+                baseLineHeight = settings.lineHeight,
+                annotationFontSize = annotationFontSize,
+                annotationLineHeight = annotationLineHeight,
+                annotationX = annotationX,
+                annotationY = annotationY,
+                rubyPosition = ruby.rubyPosition,
+                flowAdvance = max(flowAdvance, annotationHeight + gap)
+            ),
+            advance = max(flowAdvance, annotationHeight + gap)
+        )
+    }
+
+    private fun rubyAnnotationFontSize(annotation: String, settings: LayoutSettings): Float {
+        if (annotation.isBlank()) {
+            return settings.fontSize * 0.62f
+        }
+        val defaultSize = settings.fontSize * 0.62f
+        val maxSideWidth = max(settings.fontSize * 1.45f, settings.columnGap + settings.fontSize * 0.35f)
+        val widthAtUnitSize = estimateHorizontalTextWidth(annotation, 1f).coerceAtLeast(0.01f)
+        val fitSize = maxSideWidth / widthAtUnitSize
+        return fitSize.coerceIn(settings.fontSize * 0.42f, defaultSize)
+    }
+
+    private fun estimateHorizontalTextWidth(text: String, fontSize: Float): Float {
+        if (text.isBlank()) {
+            return 0f
+        }
+        var width = 0f
+        var index = 0
+        while (index < text.length) {
+            val codePoint = text.codePointAt(index)
+            width += when {
+                Character.isWhitespace(codePoint) -> fontSize * 0.32f
+                VerticalTypography.isAsciiAlnum(codePoint) -> fontSize * 0.56f
+                VerticalTypography.isHorizontalPunctuation(codePoint) -> fontSize * 0.48f
+                else -> fontSize * 0.9f
+            }
+            index += Character.charCount(codePoint)
+        }
+        return width
     }
 
     private fun resolveStyle(element: Element, stylesheet: Stylesheet, parent: InlineStyleState): InlineStyleState {
@@ -477,7 +580,8 @@ class VerticalLayoutEngine(
         val source: String,
         val display: String,
         val combineUpright: Boolean,
-        val punctuation: Boolean
+        val punctuation: Boolean,
+        val textOrientationUpright: Boolean
     ) {
         fun advance(settings: LayoutSettings): Float {
             if (source.isBlank()) {
@@ -487,7 +591,7 @@ class VerticalLayoutEngine(
                 combineUpright -> settings.fontSize * settings.lineHeight
                 punctuation -> settings.fontSize * settings.lineHeight * 0.92f
                 source.all { it.isWhitespace() } -> settings.fontSize * settings.lineHeight * 0.5f
-                VerticalTypography.isAsciiAlnum(source.codePointAt(0)) -> settings.fontSize * settings.lineHeight * 0.5f
+                VerticalTypography.isAsciiAlnum(source.codePointAt(0)) && !textOrientationUpright -> settings.fontSize * settings.lineHeight * 0.5f
                 else -> settings.fontSize * settings.lineHeight
             }
         }
@@ -495,6 +599,23 @@ class VerticalLayoutEngine(
 
     private object VerticalTypography {
         private val punctuationMap = mapOf(
+            '"' to '＂',
+            '\'' to '＇',
+            '/' to '／',
+            '\\' to '＼',
+            '-' to '－',
+            '_' to '＿',
+            '=' to '＝',
+            '+' to '＋',
+            '*' to '＊',
+            '&' to '＆',
+            '%' to '％',
+            '#' to '＃',
+            '@' to '＠',
+            '$' to '＄',
+            '^' to '＾',
+            '~' to '～',
+            '|' to '｜',
             '(' to '（',
             ')' to '）',
             '[' to '［',
@@ -529,6 +650,7 @@ class VerticalLayoutEngine(
             '？' to '︖',
             '！' to '︕',
             '—' to '︱',
+            '―' to '︱',
             '…' to '︙'
         )
 
@@ -545,7 +667,8 @@ class VerticalLayoutEngine(
                             source = "　",
                             display = "　",
                             combineUpright = false,
-                            punctuation = false
+                            punctuation = false,
+                            textOrientationUpright = style.textOrientationUpright
                         )
                         index += charCount
                     }
@@ -566,7 +689,8 @@ class VerticalLayoutEngine(
                             source = raw,
                             display = raw,
                             combineUpright = true,
-                            punctuation = false
+                            punctuation = false,
+                            textOrientationUpright = style.textOrientationUpright
                         )
                     }
 
@@ -576,7 +700,8 @@ class VerticalLayoutEngine(
                             source = raw,
                             display = verticalize(raw),
                             combineUpright = false,
-                            punctuation = true
+                            punctuation = true,
+                            textOrientationUpright = style.textOrientationUpright
                         )
                         index += charCount
                     }
@@ -585,9 +710,10 @@ class VerticalLayoutEngine(
                         val raw = String(Character.toChars(codePoint))
                         tokens += InlineToken(
                             source = raw,
-                            display = verticalize(raw),
+                            display = if (style.textOrientationUpright && isAsciiAlnum(codePoint)) raw else verticalize(raw),
                             combineUpright = false,
-                            punctuation = false
+                            punctuation = false,
+                            textOrientationUpright = style.textOrientationUpright
                         )
                         index += charCount
                     }
@@ -617,6 +743,13 @@ class VerticalLayoutEngine(
                 codePoint in 'A'.code..'Z'.code
         }
 
+        fun isHorizontalPunctuation(codePoint: Int): Boolean {
+            return when (codePoint.toChar()) {
+                '"', '\'', '/', '\\', '-', '_', '=', '+', '*', '&', '%', '#', '@', '$', '^', '~', '|' -> true
+                else -> false
+            }
+        }
+
         private fun shouldCombine(codePoint: Int, style: InlineStyleState): Boolean {
             return if (style.combineUprightDigitsOnly) {
                 Character.isDigit(codePoint)
@@ -627,7 +760,7 @@ class VerticalLayoutEngine(
 
         private fun isPunctuation(codePoint: Int): Boolean {
             return when (codePoint.toChar()) {
-                ',', '.', ':', ';', '!', '?', '(', ')', '[', ']', '{', '}', '<', '>', '、', '。', '，', '：', '；', '？', '！', '「', '」', '『', '』', '《', '》', '（', '）', '—', '…' -> true
+                ',', '.', ':', ';', '!', '?', '(', ')', '[', ']', '{', '}', '<', '>', '、', '。', '，', '：', '；', '？', '！', '「', '」', '『', '』', '《', '》', '（', '）', '—', '―', '…', '"', '\'', '/', '\\', '-', '_', '=', '+', '*', '&', '%', '#', '@', '$', '^', '~', '|' -> true
                 else -> false
             }
         }

@@ -16,16 +16,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.drawText
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -229,6 +225,7 @@ private fun EmptyLibraryScreen(loading: Boolean, errorMessage: String?, onOpen: 
 }
 
 @Composable
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 private fun ReaderScreen(
     state: ReaderUiState,
     chapterTitle: String,
@@ -243,7 +240,6 @@ private fun ReaderScreen(
     onFontMinus: () -> Unit,
     onViewportChanged: (Float, Float) -> Unit
 ) {
-    val textMeasurer = rememberTextMeasurer()
     Column(modifier = Modifier.fillMaxSize().background(Color(0xFFF8F3EA))) {
         TopAppBar(
             title = { Text(chapterTitle) },
@@ -288,7 +284,7 @@ private fun ReaderScreen(
                 if (page == null) {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("没有可显示页面") }
                 } else {
-                    VerticalPageCanvas(page = page, textMeasurer = textMeasurer, modifier = Modifier.fillMaxSize())
+                    VerticalPageCanvas(page = page, modifier = Modifier.fillMaxSize())
                 }
             }
         }
@@ -312,42 +308,31 @@ private fun ReaderScreen(
 @Composable
 private fun VerticalPageCanvas(
     page: PageLayout,
-    textMeasurer: androidx.compose.ui.text.TextMeasurer,
     modifier: Modifier = Modifier
 ) {
     Canvas(modifier = modifier) {
         drawRect(Color(0xFFFFFCF7))
+        val paint = android.graphics.Paint().apply {
+            color = android.graphics.Color.BLACK
+            isAntiAlias = true
+            textAlign = android.graphics.Paint.Align.LEFT
+        }
+        fun drawNativeText(text: String, x: Float, y: Float, fontSize: Float) {
+            if (text.isBlank()) return
+            paint.textSize = fontSize
+            val baseline = y - paint.ascent()
+            drawContext.canvas.nativeCanvas.drawText(text, x, baseline, paint)
+        }
         page.columns.forEach { column ->
             column.fragments.forEach { fragment ->
                 when (fragment) {
-                    is LayoutFragment.Text -> drawText(
-                        textMeasurer = textMeasurer,
-                        text = AnnotatedString(fragment.displayText),
-                        style = TextStyle(
-                            fontFamily = FontFamily.Serif,
-                            fontSize = fragment.fontSize.sp,
-                            lineHeight = (fragment.fontSize * fragment.lineHeight).sp
-                        ),
-                        topLeft = Offset(fragment.x, fragment.y)
-                    )
+                    is LayoutFragment.Text -> drawNativeText(fragment.displayText, fragment.x, fragment.y, fragment.fontSize)
                     is LayoutFragment.Ruby -> {
-                        drawText(
-                            textMeasurer = textMeasurer,
-                            text = AnnotatedString(fragment.baseText),
-                            style = TextStyle(fontFamily = FontFamily.Serif, fontSize = fragment.fontSize.sp),
-                            topLeft = Offset(fragment.x, fragment.y)
-                        )
-                        if (fragment.annotation.isNotEmpty()) {
-                            val annotationX = when (fragment.rubyPosition) {
-                                com.myreading.core.RubyPosition.Right, com.myreading.core.RubyPosition.Over -> fragment.x + fragment.fontSize * 0.72f
-                                com.myreading.core.RubyPosition.Under -> fragment.x - fragment.fontSize * 0.72f
-                            }
-                            drawText(
-                                textMeasurer = textMeasurer,
-                                text = AnnotatedString(fragment.annotation),
-                                style = TextStyle(fontFamily = FontFamily.Serif, fontSize = (fragment.fontSize * 0.7f).sp),
-                                topLeft = Offset(annotationX, fragment.y)
-                            )
+                        fragment.baseFragments.forEach { baseFragment ->
+                            drawNativeText(baseFragment.displayText, baseFragment.x, baseFragment.y, baseFragment.fontSize)
+                        }
+                        if (fragment.annotationDisplayText.isNotBlank()) {
+                            drawNativeText(fragment.annotationDisplayText, fragment.annotationX, fragment.annotationY, fragment.annotationFontSize)
                         }
                     }
                     is LayoutFragment.Image -> {
