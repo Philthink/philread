@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.myreading.core.EpubParserTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-06-14T06:22:00" hostname="MacBook-Pro" time="1.916">
+  <properties/>
+  <testcase name="annotationTextUsesSmallerFontThanBody" classname="com.myreading.core.EpubParserTest" time="0.864"/>
+  <testcase name="parseZizhiTongjianEpub" classname="com.myreading.core.EpubParserTest" time="0.524"/>
+  <testcase name="layoutFirstVolumeProducesVerticalPages" classname="com.myreading.core.EpubParserTest" time="0.527"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

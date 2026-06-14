@@ -32,7 +32,9 @@ data class InlineStyleState(
     val combineUprightLimit: Int = 4,
     val rubyPosition: RubyPosition? = null,
     val textOrientationUpright: Boolean = false,
-    val writingModeVertical: Boolean = true
+    val writingModeVertical: Boolean = true,
+    val fontSize: Float? = null,
+    val fontFamily: String? = null
 )
 
 sealed class LayoutFragment {
@@ -194,6 +196,7 @@ class VerticalLayoutEngine(
                     val text = normalizeWhitespace(node.textContent)
                     if (text.isNotEmpty()) {
                         val tokens = VerticalTypography.tokenize(text, inherited)
+                        val fontSize = inherited.resolvedFontSize(settings)
                         tokens.forEachIndexed { index, token ->
                             val unitId = "t$pageIndex$columnIndex${currentFragments.size}$index"
                             append(
@@ -203,13 +206,13 @@ class VerticalLayoutEngine(
                                     displayText = token.display,
                                     x = 0f,
                                     y = 0f,
-                                    fontSize = settings.fontSize,
+                                    fontSize = fontSize,
                                     lineHeight = settings.lineHeight,
                                     combineUpright = token.combineUpright,
                                     punctuation = token.punctuation,
                                     textOrientationUpright = token.textOrientationUpright
                                 ),
-                                token.advance(settings)
+                                token.advance(settings, fontSize)
                             )
                         }
                     }
@@ -218,24 +221,26 @@ class VerticalLayoutEngine(
                 Node.ELEMENT_NODE -> {
                     val element = node as Element
                     val localName = XmlSupport.localName(element).lowercase()
-                    val nextState = resolveStyle(element, stylesheet, inherited)
+                    val nextState = resolveStyle(element, stylesheet, inherited, settings)
                     when (localName) {
                         "br" -> {
-                            usedHeight += settings.fontSize * settings.lineHeight
+                            val fontSize = inherited.resolvedFontSize(settings)
+                            usedHeight += fontSize * settings.lineHeight
                             if (usedHeight > usableHeight) newColumnOrPage()
                         }
 
                         "img" -> {
                             val href = element.getAttribute("src")
-                            val advance = max(settings.fontSize * settings.lineHeight * 2f, settings.fontSize * 2f)
+                            val fontSize = inherited.resolvedFontSize(settings)
+                            val advance = max(fontSize * settings.lineHeight * 2f, fontSize * 2f)
                             append(
                                 LayoutFragment.Image(
                                     unitId = "i$pageIndex$columnIndex${currentFragments.size}",
                                     resourceHref = href,
                                     x = 0f,
                                     y = 0f,
-                                    width = settings.fontSize * 2f,
-                                    height = settings.fontSize * 2f
+                                    width = fontSize * 2f,
+                                    height = fontSize * 2f
                                 ),
                                 advance
                             )
@@ -257,8 +262,9 @@ class VerticalLayoutEngine(
 
                         else -> {
                             val blockElement = isBlockElement(element)
+                            val fontSize = nextState.resolvedFontSize(settings)
                             if (blockElement && usedHeight > 0f) {
-                                usedHeight += settings.fontSize * settings.lineHeight * 0.5f
+                                usedHeight += fontSize * settings.lineHeight * 0.5f
                                 if (usedHeight > usableHeight) {
                                     newColumnOrPage()
                                 }
@@ -267,7 +273,7 @@ class VerticalLayoutEngine(
                                 walk(child, nextState)
                             }
                             if (blockElement && usedHeight > 0f) {
-                                usedHeight += settings.fontSize * settings.lineHeight * 0.35f
+                                usedHeight += fontSize * settings.lineHeight * 0.35f
                                 if (usedHeight > usableHeight) {
                                     newColumnOrPage()
                                 }
@@ -278,7 +284,7 @@ class VerticalLayoutEngine(
             }
         }
 
-        val rootState = resolveStyle(body, stylesheet, InlineStyleState())
+        val rootState = resolveStyle(body, stylesheet, InlineStyleState(), settings)
         for (child in XmlSupport.children(body)) {
             walk(child, rootState)
         }
@@ -307,7 +313,7 @@ class VerticalLayoutEngine(
                 }
             })
             append('|')
-            append(chapter.content.hashCode())
+            append(chapter.content.contentHashCode())
         }
         return raw.hashCode().toString(16)
     }
@@ -377,6 +383,7 @@ class VerticalLayoutEngine(
     ): RubyLayout {
         val ruby = parseRuby(element, inherited)
         val baseTokens = VerticalTypography.tokenize(ruby.baseText, inherited)
+        val baseFontSize = inherited.resolvedFontSize(settings)
         val baseFragments = mutableListOf<LayoutFragment.Text>()
         var baseAdvance = 0f
         for ((index, token) in baseTokens.withIndex()) {
@@ -386,22 +393,22 @@ class VerticalLayoutEngine(
                 displayText = token.display,
                 x = x,
                 y = y + baseAdvance,
-                fontSize = settings.fontSize,
+                fontSize = baseFontSize,
                 lineHeight = settings.lineHeight,
                 combineUpright = token.combineUpright,
                 punctuation = token.punctuation,
                 textOrientationUpright = token.textOrientationUpright
             )
             baseFragments += fragment
-            baseAdvance += token.advance(settings)
+            baseAdvance += token.advance(settings, baseFontSize)
         }
 
-        val annotationFontSize = rubyAnnotationFontSize(ruby.annotationText, settings)
+        val annotationFontSize = rubyAnnotationFontSize(ruby.annotationText, settings, baseFontSize)
         val annotationLineHeight = max(settings.lineHeight, 1.05f)
         val annotationHeight = annotationFontSize * annotationLineHeight
-        val gap = max(2f, settings.fontSize * 0.12f)
+        val gap = max(2f, baseFontSize * 0.12f)
         val annotationX = when (ruby.rubyPosition) {
-            RubyPosition.Right -> x + settings.fontSize * 0.78f
+            RubyPosition.Right -> x + baseFontSize * 0.78f
             RubyPosition.Over -> x
             RubyPosition.Under -> x
         }
@@ -410,7 +417,7 @@ class VerticalLayoutEngine(
             RubyPosition.Over -> y - annotationHeight - gap
             RubyPosition.Under -> y + baseAdvance + gap
         }
-        val flowAdvance = max(baseAdvance, settings.fontSize * settings.lineHeight)
+        val flowAdvance = max(baseAdvance, baseFontSize * settings.lineHeight)
 
         return RubyLayout(
             fragment = LayoutFragment.Ruby(
@@ -420,7 +427,7 @@ class VerticalLayoutEngine(
                 annotationDisplayText = ruby.annotationText,
                 x = x,
                 y = y,
-                baseFontSize = settings.fontSize,
+                baseFontSize = baseFontSize,
                 baseLineHeight = settings.lineHeight,
                 annotationFontSize = annotationFontSize,
                 annotationLineHeight = annotationLineHeight,
@@ -433,15 +440,15 @@ class VerticalLayoutEngine(
         )
     }
 
-    private fun rubyAnnotationFontSize(annotation: String, settings: LayoutSettings): Float {
+    private fun rubyAnnotationFontSize(annotation: String, settings: LayoutSettings, baseFontSize: Float): Float {
         if (annotation.isBlank()) {
-            return settings.fontSize * 0.62f
+            return baseFontSize * 0.62f
         }
-        val defaultSize = settings.fontSize * 0.62f
-        val maxSideWidth = max(settings.fontSize * 1.45f, settings.columnGap + settings.fontSize * 0.35f)
+        val defaultSize = baseFontSize * 0.62f
+        val maxSideWidth = max(baseFontSize * 1.45f, settings.columnGap + baseFontSize * 0.35f)
         val widthAtUnitSize = estimateHorizontalTextWidth(annotation, 1f).coerceAtLeast(0.01f)
         val fitSize = maxSideWidth / widthAtUnitSize
-        return fitSize.coerceIn(settings.fontSize * 0.42f, defaultSize)
+        return fitSize.coerceIn(baseFontSize * 0.42f, defaultSize)
     }
 
     private fun estimateHorizontalTextWidth(text: String, fontSize: Float): Float {
@@ -463,18 +470,23 @@ class VerticalLayoutEngine(
         return width
     }
 
-    private fun resolveStyle(element: Element, stylesheet: Stylesheet, parent: InlineStyleState): InlineStyleState {
+    private fun resolveStyle(
+        element: Element,
+        stylesheet: Stylesheet,
+        parent: InlineStyleState,
+        settings: LayoutSettings
+    ): InlineStyleState {
         var state = parent
 
         for (rule in stylesheet.rules) {
             if (StyleMatcher.matches(rule.selector, element)) {
-                state = state.apply(rule.declarations)
+                state = state.apply(rule.declarations, settings)
             }
         }
 
         val inlineDeclarations = parseInlineDeclarations(element.getAttribute("style"))
         if (inlineDeclarations.isNotEmpty()) {
-            state = state.apply(inlineDeclarations)
+            state = state.apply(inlineDeclarations, settings)
         }
 
         return state
@@ -495,10 +507,10 @@ class VerticalLayoutEngine(
             }
     }
 
-    private fun InlineStyleState.apply(declarations: List<CssDeclaration>): InlineStyleState {
+    private fun InlineStyleState.apply(declarations: List<CssDeclaration>, settings: LayoutSettings): InlineStyleState {
         var result = this
         for (declaration in declarations) {
-            when (declaration.property.lowercase()) {
+            when (CssSupport.canonicalProperty(declaration.property)) {
                 "text-combine-upright", "-webkit-text-combine" -> {
                     val value = declaration.value.lowercase()
                     result = when {
@@ -538,9 +550,56 @@ class VerticalLayoutEngine(
                 "writing-mode" -> {
                     result = result.copy(writingModeVertical = declaration.value.lowercase().startsWith("vertical"))
                 }
+
+                "font-size" -> {
+                    result = result.copy(fontSize = CssSupport.resolveFontSize(result.fontSize, settings, declaration.value))
+                }
+
+                "font-family" -> {
+                    val family = CssSupport.firstFontFamily(declaration.value)
+                    if (family.isNotBlank()) {
+                        result = result.copy(fontFamily = family)
+                    }
+                }
             }
         }
         return result
+    }
+
+    private fun InlineStyleState.resolvedFontSize(settings: LayoutSettings): Float {
+        return fontSize ?: settings.fontSize
+    }
+
+    private object CssSupport {
+        fun canonicalProperty(property: String): String {
+            return when (property.lowercase()) {
+                "-webkit-writing-mode", "-epub-writing-mode" -> "writing-mode"
+                else -> property.lowercase()
+            }
+        }
+
+        fun resolveFontSize(current: Float?, settings: LayoutSettings, value: String): Float {
+            val base = current ?: settings.fontSize
+            val normalized = value.trim().lowercase()
+            return when {
+                normalized.endsWith("em") -> base * normalized.removeSuffix("em").trim().toFloatOrNull()!!
+                normalized.endsWith("rem") -> settings.fontSize * normalized.removeSuffix("rem").trim().toFloatOrNull()!!
+                normalized.endsWith("px") -> normalized.removeSuffix("px").trim().toFloatOrNull() ?: base
+                normalized.endsWith("%") -> base * normalized.removeSuffix("%").trim().toFloatOrNull()!! / 100f
+                normalized == "xx-small" -> settings.fontSize * 0.6f
+                normalized == "x-small" -> settings.fontSize * 0.75f
+                normalized == "small" -> settings.fontSize * 0.875f
+                normalized == "medium" -> settings.fontSize
+                normalized == "large" -> settings.fontSize * 1.125f
+                normalized == "x-large" -> settings.fontSize * 1.5f
+                normalized == "xx-large" -> settings.fontSize * 2f
+                else -> normalized.toFloatOrNull() ?: base
+            }
+        }
+
+        fun firstFontFamily(value: String): String {
+            return value.split(',').firstOrNull()?.trim()?.trim('"', '\'').orEmpty()
+        }
     }
 
     private object StyleMatcher {
@@ -583,16 +642,16 @@ class VerticalLayoutEngine(
         val punctuation: Boolean,
         val textOrientationUpright: Boolean
     ) {
-        fun advance(settings: LayoutSettings): Float {
+        fun advance(settings: LayoutSettings, fontSize: Float): Float {
             if (source.isBlank()) {
-                return settings.fontSize * settings.lineHeight * 0.5f
+                return fontSize * settings.lineHeight * 0.5f
             }
             return when {
-                combineUpright -> settings.fontSize * settings.lineHeight
-                punctuation -> settings.fontSize * settings.lineHeight * 0.92f
-                source.all { it.isWhitespace() } -> settings.fontSize * settings.lineHeight * 0.5f
-                VerticalTypography.isAsciiAlnum(source.codePointAt(0)) && !textOrientationUpright -> settings.fontSize * settings.lineHeight * 0.5f
-                else -> settings.fontSize * settings.lineHeight
+                combineUpright -> fontSize * settings.lineHeight
+                punctuation -> fontSize * settings.lineHeight * 0.92f
+                source.all { it.isWhitespace() } -> fontSize * settings.lineHeight * 0.5f
+                VerticalTypography.isAsciiAlnum(source.codePointAt(0)) && !textOrientationUpright -> fontSize * settings.lineHeight * 0.5f
+                else -> fontSize * settings.lineHeight
             }
         }
     }

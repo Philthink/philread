@@ -44,7 +44,12 @@ object CssParser {
                     if (property.isEmpty() || value.isEmpty()) null else CssDeclaration(property, value)
                 }
             if (selector.isNotEmpty() && declarations.isNotEmpty()) {
-                rules += CssRule(selector, declarations)
+                selector.split(',')
+                    .map { it.trim() }
+                    .filter { it.isNotEmpty() }
+                    .forEach { part ->
+                        rules += CssRule(part, declarations)
+                    }
             }
         }
 

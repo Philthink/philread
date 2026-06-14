@@ -369,7 +369,7 @@ object DemoBookFactory {
                     <p>日月盈昃辰宿列張。「古籍」之形，當隨竪排而定。</p>
                   </body>
                 </html>
-            """.trimIndent(),
+            """.trimIndent().encodeToByteArray(),
             referencedResourceHrefs = emptySet()
         )
         return Book(

@@ -118,7 +118,7 @@ class LayoutEngineTest {
             title = "chapter",
             order = 0,
             linear = true,
-            content = html,
+            content = html.encodeToByteArray(),
             referencedResourceHrefs = emptySet()
         )
         return engine.layoutChapter(chapter, stylesheet, settings).flatMap { it.columns }.flatMap { it.fragments }

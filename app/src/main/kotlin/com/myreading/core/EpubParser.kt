@@ -12,8 +12,8 @@ class EpubParser {
         ZipFile(epubFile).use { archive ->
             val issues = mutableListOf<ParseIssue>()
             val rootfilePath = readRootfilePath(archive)
-            val opfXml = readText(archive, rootfilePath)
-            val opf = XmlSupport.parse(opfXml)
+            val opfBytes = readBytes(archive, rootfilePath)
+            val opf = XmlSupport.parse(opfBytes)
             val opfBasePath = PathSupport.parent(rootfilePath)
 
             val metadata = parseMetadata(opf)
@@ -39,8 +39,8 @@ class EpubParser {
     private fun readRootfilePath(archive: ZipFile): String {
         val entry = archive.getEntry("META-INF/container.xml")
             ?: throw IOException("Missing META-INF/container.xml")
-        val xml = archive.getInputStream(entry).use { it.readBytes().toString(Charsets.UTF_8) }
-        val document = XmlSupport.parse(xml)
+        val bytes = archive.getInputStream(entry).use { it.readBytes() }
+        val document = XmlSupport.parse(bytes)
         val rootfiles = document.getElementsByTagNameNS("*", "rootfile")
         if (rootfiles.length == 0) throw IOException("container.xml missing rootfile")
         val rootfile = rootfiles.item(0) as Element
@@ -49,9 +49,9 @@ class EpubParser {
         return PathSupport.normalize(path)
     }
 
-    private fun readText(archive: ZipFile, entryPath: String): String {
+    private fun readBytes(archive: ZipFile, entryPath: String): ByteArray {
         val entry = archive.getEntry(entryPath) ?: throw IOException("Missing EPUB entry: $entryPath")
-        return archive.getInputStream(entry).use { it.readBytes().toString(Charsets.UTF_8) }
+        return archive.getInputStream(entry).use { it.readBytes() }
     }
 
     private fun parseMetadata(opf: Document): Metadata {
@@ -147,8 +147,8 @@ class EpubParser {
 
         navItem?.let {
             runCatching {
-                val xml = readText(archive, it.href)
-                val doc = XmlSupport.parse(xml)
+                val bytes = readBytes(archive, it.href)
+                val doc = XmlSupport.parse(bytes)
                 val roots = parseNavXhtml(doc, it.href)
                 if (roots.isNotEmpty()) return Navigation(it.href, roots)
             }
@@ -156,8 +156,8 @@ class EpubParser {
 
         ncxItem?.let {
             runCatching {
-                val xml = readText(archive, it.href)
-                val doc = XmlSupport.parse(xml)
+                val bytes = readBytes(archive, it.href)
+                val doc = XmlSupport.parse(bytes)
                 val roots = parseNcx(doc, it.href)
                 return Navigation(it.href, roots)
             }
@@ -282,7 +282,7 @@ class EpubParser {
         val titleIndex = buildNavigationTitleIndex(navigation)
         return spine.items.mapIndexedNotNull { order, spineItem ->
             val manifestItem = manifest.byId[spineItem.idref] ?: return@mapIndexedNotNull null
-            val content = readText(archive, manifestItem.href)
+            val content = readBytes(archive, manifestItem.href)
             val title = titleIndex[PathSupport.stripFragmentAndQuery(manifestItem.href)]
                 ?: extractChapterTitle(content, manifestItem.href)
             val referenced = linkedSetOf<String>()
@@ -312,7 +312,7 @@ class EpubParser {
         return result
     }
 
-    private fun extractChapterTitle(content: String, href: String): String {
+    private fun extractChapterTitle(content: ByteArray, href: String): String {
         return runCatching {
             val doc = XmlSupport.parse(content)
             val titleNodes = doc.getElementsByTagNameNS("*", "title")
@@ -333,7 +333,7 @@ class EpubParser {
 
     private fun scanChapterResources(
         archive: ZipFile,
-        content: String,
+        content: ByteArray,
         chapterHref: String,
         manifest: Manifest
     ): Set<String> {
@@ -363,7 +363,8 @@ class EpubParser {
             val resource = manifest.byHref[href] ?: continue
             if (resource.mediaType.lowercase().contains("css")) {
                 runCatching {
-                    val css = readText(archive, href)
+                    val cssBytes = readBytes(archive, href)
+                    val css = cssBytes.toString(Charsets.UTF_8)
                     refs += CssParser.parse(css, href).resourceRefs
                 }
             }

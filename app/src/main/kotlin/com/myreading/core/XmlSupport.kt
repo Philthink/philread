@@ -8,29 +8,44 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
-import java.nio.charset.StandardCharsets
 import javax.xml.XMLConstants
 import javax.xml.parsers.DocumentBuilderFactory
 
 object XmlSupport {
-    fun parse(input: InputStream): Document {
+    private val doctypePattern = Regex("(?is)<!DOCTYPE[^>]*>")
+
+    fun parse(bytes: ByteArray): Document {
         try {
+            val sanitized = sanitizeXmlBytes(bytes)
             val factory = DocumentBuilderFactory.newInstance().apply {
                 isNamespaceAware = true
                 isExpandEntityReferences = false
+                isValidating = false
                 setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true)
                 setFeature("http://xml.org/sax/features/external-general-entities", false)
                 setFeature("http://xml.org/sax/features/external-parameter-entities", false)
+                setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+                runCatching { setAttribute("http://javax.xml.XMLConstants/property/accessExternalDTD", "") }
+                runCatching { setAttribute("http://javax.xml.XMLConstants/property/accessExternalSchema", "") }
             }
-            return factory.newDocumentBuilder().parse(input)
+            return factory.newDocumentBuilder().parse(ByteArrayInputStream(sanitized))
         } catch (e: Exception) {
             throw IOException("Failed to parse XML", e)
         }
     }
 
+    /** Prefer [parse] with raw bytes to preserve original encoding. */
+    @Deprecated("Use parse(bytes: ByteArray) to avoid encoding issues")
     fun parse(xml: String): Document {
-        val sanitized = xml.replace(Regex("(?is)<!DOCTYPE[^>]*>"), "")
-        return parse(ByteArrayInputStream(sanitized.toByteArray(StandardCharsets.UTF_8)))
+        return parse(sanitizeXmlString(xml).encodeToByteArray())
+    }
+
+    private fun sanitizeXmlBytes(bytes: ByteArray): ByteArray {
+        return sanitizeXmlString(String(bytes, Charsets.UTF_8)).encodeToByteArray()
+    }
+
+    private fun sanitizeXmlString(xml: String): String {
+        return xml.replace(doctypePattern, "")
     }
 
     fun localName(node: Node): String = node.localName ?: node.nodeName
@@ -56,7 +71,11 @@ object PathSupport {
     fun stripFragmentAndQuery(href: String): String {
         val hash = href.indexOf('#')
         val query = href.indexOf('?')
-        val end = listOf(href.length, hash.takeIf { it >= 0 } ?: href.length, query.takeIf { it >= 0 } ?: href.length).minOrNull() ?: href.length
+        val end = listOf(
+            href.length,
+            hash.takeIf { it >= 0 } ?: href.length,
+            query.takeIf { it >= 0 } ?: href.length
+        ).minOrNull() ?: href.length
         return href.substring(0, end)
     }
 
@@ -92,4 +111,3 @@ object PathSupport {
         return if (fragment.isNullOrEmpty()) resolved else "$resolved#$fragment"
     }
 }
-

@@ -89,9 +89,29 @@ data class Chapter(
     val title: String,
     val order: Int,
     val linear: Boolean,
-    val content: String,
+    val content: ByteArray,
     val referencedResourceHrefs: Set<String>
-)
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other == null || this::class != other::class) return false
+        other as Chapter
+        return id == other.id && href == other.href && title == other.title &&
+            order == other.order && linear == other.linear &&
+            content.contentEquals(other.content) && referencedResourceHrefs == other.referencedResourceHrefs
+    }
+
+    override fun hashCode(): Int {
+        var result = id.hashCode()
+        result = 31 * result + href.hashCode()
+        result = 31 * result + title.hashCode()
+        result = 31 * result + order
+        result = 31 * result + linear.hashCode()
+        result = 31 * result + content.contentHashCode()
+        result = 31 * result + referencedResourceHrefs.hashCode()
+        return result
+    }
+}
 
 class Resource(
     val id: String,
@@ -137,4 +157,3 @@ data class Book(
     val resourcesByHref: Map<String, Resource>,
     val issues: List<ParseIssue>
 )
-
