@@ -76,18 +76,20 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val file = copyToTempFile(getApplication(), uri)
                 val book = parser.parse(file)
+                require(book.chapters.isNotEmpty()) { "EPUB 中没有可阅读章节" }
+                val initialChapterIndex = book.initialReadableChapterIndex()
                 withContext(Dispatchers.Main) {
                     state = state.copy(
                         loading = false,
                         errorMessage = null,
                         book = book,
-                        chapterIndex = 0,
+                        chapterIndex = initialChapterIndex,
                         pageIndex = 0
                     )
                 }
             } catch (error: Throwable) {
                 withContext(Dispatchers.Main) {
-                    state = state.copy(loading = false, errorMessage = error.message ?: "打开 EPUB 失败")
+                    state = state.copy(loading = false, errorMessage = readableImportError(error))
                 }
             }
         }
@@ -155,7 +157,20 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         }
         return output
     }
+
+    private fun readableImportError(error: Throwable): String {
+        val detail = generateSequence(error) { it.cause }
+            .mapNotNull { it.message?.takeIf(String::isNotBlank) }
+            .firstOrNull()
+        return if (detail == null) "打开 EPUB 失败" else "打开 EPUB 失败：$detail"
+    }
 }
+
+private val EPUB_MIME_TYPES = arrayOf(
+    "application/epub+zip",
+    "application/zip",
+    "application/octet-stream"
+)
 
 @Composable
 fun ReaderApp() {
@@ -177,7 +192,7 @@ fun ReaderApp() {
                 EmptyLibraryScreen(
                     loading = state.loading,
                     errorMessage = state.errorMessage,
-                    onOpen = { openDocument.launch(arrayOf("application/epub+zip")) },
+                    onOpen = { openDocument.launch(EPUB_MIME_TYPES) },
                     onOpenDemo = viewModel::openDemo
                 )
             } else {
@@ -186,7 +201,7 @@ fun ReaderApp() {
                     chapterTitle = viewModel.chapterTitle(),
                     chapterCount = viewModel.chapterCount(),
                     page = viewModel.currentPage(),
-                    onOpen = { openDocument.launch(arrayOf("application/epub+zip")) },
+                    onOpen = { openDocument.launch(EPUB_MIME_TYPES) },
                     onPreviousPage = viewModel::previousPage,
                     onNextPage = viewModel::nextPage,
                     onPreviousChapter = { viewModel.selectChapter((state.chapterIndex - 1).coerceAtLeast(0)) },
