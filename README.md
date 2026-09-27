@@ -72,7 +72,7 @@ paragraph starts in a new column with a two-character first-line indent. Tapping
 middle third of the page reveals both controls; they auto-hide after ten seconds.
 
 **Design** – Bookmarks are stored per EPUB identity as chapter/page positions in
-Android `SharedPreferences`. The bottom control area always reserves 80dp even when
+Android `SharedPreferences`. The bottom control area always reserves 48dp even when
 hidden, preventing page height and pagination from changing as controls appear. The
 sidebar may release horizontal space, so viewport changes repaginate and clamp the
 active page.
@@ -169,21 +169,27 @@ flowchart LR
 
 **Feature** – The sidebar can be collapsed with a compact arrow or by swiping it
 left. Its width, the bottom bar, and the reading viewport transition together. The
-page fades through a small native blur while controls open or close. The bottom bar
+page stays clear while controls open or close. The bottom bar
 also provides a persisted vertical/horizontal layout switch. Horizontal mode uses
 native horizontal coordinates; it does not rotate the Canvas. Consecutive ASCII
 digits remain one readable token, so values such as `123` are not converted into
 vertical glyph variants.
 
-**Design** – A lightweight width and alpha animation drives the sidebar and bottom
-bar as one state transition, with the arrow centered on the sidebar edge. On
-Android versions that support it, the page uses a short-lived `RenderEffect` blur
-only while the viewport is changing, then returns to a clear Canvas. The layout
+**Design** – Sidebar width and alpha animate with the arrow centered on its edge.
+The bottom area always reserves 48dp, including when its controls are hidden.
+Zero internal bar insets leave room for the two clock labels and 48dp touch targets.
+The shelf toggle reuses the bordered sidebar button; chapter and page labels are
+centered across the sidebar width. These changes are implemented in `ReaderApp`.
+Viewport changes are debounced for 180ms so animation frames do not each parse and
+paginate the chapter. Native blur and the duplicate page layer were removed after
+device logs reported `RenderEffect` throwing `nativePtr is null`. The layout
 engine includes a separate horizontal flow with line wrapping and page breaking,
 while the vertical flow keeps CJK punctuation, ruby, and writing-mode behavior
-unchanged. The supplied settings and orientation PNGs are downscaled to 96px
+unchanged. The supplied settings and orientation PNGs are downscaled to 192px
 thumbnails in `drawable-nodpi` so the original 2048px files are not decoded at
-runtime.
+runtime. Both icons use their original colors at 32dp without Material tinting.
+CSS font-size parsing checks `rem` before `em` and falls back for malformed units;
+this also fixes a separate null-pointer crash found in device logs.
 
 **Call Flow**
 
@@ -192,7 +198,8 @@ flowchart LR
     Arrow[Sidebar arrow or left swipe] --> Controls[Shared controls state]
     Controls --> Sidebar[Animated sidebar]
     Controls --> Bottom[Animated bottom bar]
-    Controls --> Blur[Animated page blur]
+    Controls --> Stable[Wait for stable viewport]
+    Stable --> Repaginate[Paginate once]
     Switch[Layout switch icon] --> Orientation[Persist orientation]
     Orientation --> Mode{Vertical or horizontal}
     Mode --> Vertical[Vertical CJK layout]

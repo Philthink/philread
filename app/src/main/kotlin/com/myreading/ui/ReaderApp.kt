@@ -3,11 +3,8 @@ package com.myreading.ui
 import android.app.Application
 import android.content.Context
 import android.content.Intent
-import android.graphics.RenderEffect
-import android.graphics.Shader
 import android.graphics.Typeface
 import android.net.Uri
-import android.os.Build
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -33,7 +30,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
@@ -41,6 +37,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -668,14 +665,6 @@ private fun ReaderScreen(
         targetValue = if (controlsVisible) 1f else 0f,
         label = "sidebar alpha"
     )
-    val contentBlur by animateFloatAsState(
-        targetValue = if (sidebarWidth > 1.dp && sidebarWidth < 149.dp) 2.5f else 0f,
-        label = "content blur"
-    )
-    val bottomBarHeight by animateDpAsState(
-        targetValue = if (controlsVisible) 80.dp else 0.dp,
-        label = "bottom bar height"
-    )
 
     LaunchedEffect(state.sessionStartedAt) {
         while (true) {
@@ -838,15 +827,20 @@ private fun ReaderScreen(
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         SidebarButton(label = "上一章", onClick = onPreviousChapter)
                         SidebarButton(label = "下一章", onClick = onNextChapter)
-                        TextButton(onClick = onToggleShelf, modifier = Modifier.fillMaxWidth()) {
-                            SingleLineLabel(if (inShelf) "★ 移出书架" else "☆ 加入书架")
-                        }
+                        SidebarButton(
+                            label = if (inShelf) "★ 移出书架" else "☆ 加入书架",
+                            onClick = onToggleShelf
+                        )
                         Text(
                             "章节 ${state.chapterIndex + 1} / ${maxOf(chapterTitles.size, 1)}",
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.labelSmall
                         )
                         Text(
                             if (pageCount == 0) "页面 0 / 0" else "页面 ${state.pageIndex + 1} / $pageCount",
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Center,
                             style = MaterialTheme.typography.labelSmall
                         )
                     }
@@ -898,6 +892,8 @@ private fun ReaderScreen(
                 BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(end = 28.dp)) {
                     val density = LocalDensity.current
                     LaunchedEffect(maxWidth, maxHeight) {
+                        // Cancel intermediate viewport changes; paginate only after resizing settles.
+                        delay(180)
                         with(density) {
                             onViewportChanged(maxWidth.toPx(), maxHeight.toPx())
                         }
@@ -911,38 +907,20 @@ private fun ReaderScreen(
                             darkTheme = darkTheme,
                             modifier = Modifier.fillMaxSize()
                         )
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && contentBlur > 0f) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxHeight()
-                                    .width(sidebarWidth)
-                                    .graphicsLayer {
-                                        clip = true
-                                        renderEffect = RenderEffect.createBlurEffect(
-                                            contentBlur,
-                                            contentBlur,
-                                            Shader.TileMode.CLAMP
-                                        ).asComposeRenderEffect()
-                                    }
-                            ) {
-                                VerticalPageCanvas(
-                                    page = page,
-                                    fontChoice = state.fontChoice,
-                                    darkTheme = darkTheme,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            }
-                        }
                     }
                 }
                 if (currentBookmarked) BookmarkRibbon(modifier = Modifier.align(Alignment.TopEnd).padding(end = 5.dp))
             }
         }
         Box(
-            modifier = Modifier.fillMaxWidth().height(bottomBarHeight).background(MaterialTheme.colorScheme.background)
+            modifier = Modifier.fillMaxWidth().height(48.dp).background(MaterialTheme.colorScheme.background)
         ) {
             if (controlsVisible) {
-                BottomAppBar(modifier = Modifier.fillMaxSize()) {
+                BottomAppBar(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(0.dp),
+                    windowInsets = WindowInsets(0, 0, 0, 0)
+                ) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -961,7 +939,9 @@ private fun ReaderScreen(
                                 }) {
                                     Icon(
                                         painter = painterResource(com.myreading.R.drawable.setting),
-                                        contentDescription = "设置"
+                                        contentDescription = "设置",
+                                        modifier = Modifier.size(32.dp),
+                                        tint = Color.Unspecified
                                     )
                                 }
                                 DropdownMenu(
@@ -987,7 +967,9 @@ private fun ReaderScreen(
                             IconButton(onClick = onToggleOrientation) {
                                 Icon(
                                     painter = painterResource(com.myreading.R.drawable.switch_icon),
-                                    contentDescription = if (orientation == ReadingOrientation.VERTICAL) "切换横版" else "切换竖版"
+                                    contentDescription = if (orientation == ReadingOrientation.VERTICAL) "切换横版" else "切换竖版",
+                                    modifier = Modifier.size(32.dp),
+                                    tint = Color.Unspecified
                                 )
                             }
                             OutlinedButton(onClick = onPreviousPage) { Text("上一页") }

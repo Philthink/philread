@@ -765,10 +765,10 @@ class VerticalLayoutEngine(
             val base = current ?: settings.fontSize
             val normalized = value.trim().lowercase()
             return when {
-                normalized.endsWith("em") -> base * normalized.removeSuffix("em").trim().toFloatOrNull()!!
-                normalized.endsWith("rem") -> settings.fontSize * normalized.removeSuffix("rem").trim().toFloatOrNull()!!
+                normalized.endsWith("rem") -> normalized.removeSuffix("rem").trim().toFloatOrNull()?.let { settings.fontSize * it } ?: base
+                normalized.endsWith("em") -> normalized.removeSuffix("em").trim().toFloatOrNull()?.let { base * it } ?: base
                 normalized.endsWith("px") -> normalized.removeSuffix("px").trim().toFloatOrNull() ?: base
-                normalized.endsWith("%") -> base * normalized.removeSuffix("%").trim().toFloatOrNull()!! / 100f
+                normalized.endsWith("%") -> normalized.removeSuffix("%").trim().toFloatOrNull()?.let { base * it / 100f } ?: base
                 normalized == "xx-small" -> settings.fontSize * 0.6f
                 normalized == "x-small" -> settings.fontSize * 0.75f
                 normalized == "small" -> settings.fontSize * 0.875f

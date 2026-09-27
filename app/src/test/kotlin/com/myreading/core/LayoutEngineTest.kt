@@ -20,6 +20,16 @@ class LayoutEngineTest {
     )
 
     @Test
+    fun remAndMalformedFontSizesDoNotCrashPagination() {
+        val fragments = layoutTextFragments(
+            """<html xmlns="http://www.w3.org/1999/xhtml"><body><p style="font-size:2em"><span style="font-size:1.5rem">甲</span><span style="font-size:bad%">乙</span><span style="font-size:badem">丙</span></p></body></html>"""
+        )
+        assertEquals(30f, fragments.first { it.sourceText == "甲" }.fontSize, 0.01f)
+        assertEquals(40f, fragments.first { it.sourceText == "乙" }.fontSize, 0.01f)
+        assertEquals(40f, fragments.first { it.sourceText == "丙" }.fontSize, 0.01f)
+    }
+
+    @Test
     fun rubyPositionRightPlacesAnnotationBesideBase() {
         val fragments = layoutFragments(
             """
