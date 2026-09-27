@@ -2,7 +2,6 @@ package com.myreading.core
 
 import org.w3c.dom.Element
 import org.w3c.dom.Node
-import kotlin.math.floor
 import kotlin.math.max
 
 data class LayoutSettings(
@@ -141,8 +140,9 @@ class VerticalLayoutEngine(
 
         val usableWidth = max(1f, settings.pageWidth - settings.marginLeft - settings.marginRight)
         val usableHeight = max(1f, settings.pageHeight - settings.marginTop - settings.marginBottom)
-        val columnWidth = max(1f, settings.fontSize * 1.2f)
-        val columnsPerPage = max(1, floor((usableWidth + settings.columnGap) / (columnWidth + settings.columnGap)).toInt())
+        val defaultColumnWidth = max(1f, settings.fontSize * 1.2f)
+        var columnWidth = defaultColumnWidth
+        var usedPageWidth = 0f
 
         val pages = mutableListOf<PageLayout>()
         var currentColumns = mutableListOf<ColumnLayout>()
@@ -151,15 +151,15 @@ class VerticalLayoutEngine(
         var columnIndex = 0
         var usedHeight = 0f
 
-        fun columnX(index: Int): Float {
-            return settings.pageWidth - settings.marginRight - ((index + 1) * columnWidth) - (index * settings.columnGap)
+        fun columnX(): Float {
+            return settings.pageWidth - settings.marginRight - usedPageWidth - columnWidth
         }
 
         fun flushColumn() {
             if (currentFragments.isEmpty()) return
             currentColumns += ColumnLayout(
                 index = columnIndex,
-                x = columnX(columnIndex),
+                x = columnX(),
                 y = settings.marginTop,
                 width = columnWidth,
                 height = usableHeight,
@@ -176,10 +176,13 @@ class VerticalLayoutEngine(
 
         fun newColumnOrPage() {
             flushColumn()
-            if (columnIndex + 1 >= columnsPerPage) {
+            usedPageWidth += columnWidth + settings.columnGap
+            columnWidth = defaultColumnWidth
+            if (usedPageWidth + columnWidth > usableWidth) {
                 flushPage()
                 pageIndex += 1
                 columnIndex = 0
+                usedPageWidth = 0f
             } else {
                 columnIndex += 1
             }
@@ -194,7 +197,28 @@ class VerticalLayoutEngine(
 
         fun append(fragment: LayoutFragment, advance: Float) {
             ensureSpace(advance)
-            val positioned = fragment.positionAt(columnX(columnIndex), settings.marginTop + usedHeight)
+            val requiredWidth = when (fragment) {
+                is LayoutFragment.Text -> max(fragment.fontSize * 1.2f, fragment.displayText.length * fragment.fontSize * if (fragment.displayText.all { it in '0'..'9' }) 0.6f else 0f)
+                is LayoutFragment.Ruby -> fragment.baseFontSize * 1.8f
+                is LayoutFragment.Image -> fragment.width
+            }
+            val previousX = columnX()
+            if (max(columnWidth, requiredWidth) + usedPageWidth > usableWidth && currentColumns.isNotEmpty()) {
+                flushPage()
+                pageIndex += 1
+                columnIndex = 0
+                usedPageWidth = 0f
+            }
+            columnWidth = max(columnWidth, requiredWidth)
+            val shift = columnX() - previousX
+            if (shift != 0f) currentFragments = currentFragments.map { existing ->
+                when (existing) {
+                    is LayoutFragment.Text -> existing.copy(x = existing.x + shift)
+                    is LayoutFragment.Image -> existing.copy(x = existing.x + shift)
+                    is LayoutFragment.Ruby -> existing.positionAt(existing.x + shift, existing.y)
+                }
+            }.toMutableList()
+            val positioned = fragment.positionAt(columnX(), settings.marginTop + usedHeight)
             currentFragments += positioned
             usedHeight += advance
         }
@@ -260,7 +284,7 @@ class VerticalLayoutEngine(
                                 element = element,
                                 inherited = nextState,
                                 settings = settings,
-                                x = columnX(columnIndex),
+                                x = columnX(),
                                 y = settings.marginTop + usedHeight,
                                 unitId = "r$pageIndex$columnIndex${currentFragments.size}"
                             )
@@ -357,7 +381,8 @@ class VerticalLayoutEngine(
         val usableWidth = max(1f, settings.pageWidth - settings.marginLeft - settings.marginRight)
         val usableHeight = max(1f, settings.pageHeight - settings.marginTop - settings.marginBottom)
         val lineHeight = settings.fontSize * settings.lineHeight
-        val linesPerPage = max(1, floor(usableHeight / lineHeight).toInt())
+        var currentLineHeight = lineHeight
+        var usedPageHeight = 0f
         val pages = mutableListOf<PageLayout>()
         var currentLines = mutableListOf<ColumnLayout>()
         var currentFragments = mutableListOf<LayoutFragment>()
@@ -370,9 +395,9 @@ class VerticalLayoutEngine(
             currentLines += ColumnLayout(
                 index = lineIndex,
                 x = settings.marginLeft,
-                y = settings.marginTop + lineIndex * lineHeight,
+                y = settings.marginTop + usedPageHeight,
                 width = usableWidth,
-                height = lineHeight,
+                height = currentLineHeight,
                 fragments = currentFragments.toList()
             )
             currentFragments = mutableListOf()
@@ -387,10 +412,13 @@ class VerticalLayoutEngine(
 
         fun newLine() {
             flushLine()
-            if (lineIndex + 1 >= linesPerPage) {
+            usedPageHeight += currentLineHeight
+            currentLineHeight = lineHeight
+            if (usedPageHeight + currentLineHeight > usableHeight) {
                 flushPage()
                 pageIndex += 1
                 lineIndex = 0
+                usedPageHeight = 0f
             } else {
                 lineIndex += 1
             }
@@ -401,12 +429,26 @@ class VerticalLayoutEngine(
             VerticalTypography.tokenize(text, style, vertical = false).forEachIndexed { index, token ->
                 val advance = token.advanceHorizontal(fontSize)
                 if (usedWidth > 0f && usedWidth + advance > usableWidth) newLine()
+                val requiredHeight = fontSize * max(settings.lineHeight, 1.35f)
+                if (usedPageHeight + max(currentLineHeight, requiredHeight) > usableHeight && currentLines.isNotEmpty()) {
+                    val shift = usedPageHeight
+                    val pending = currentFragments
+                    currentFragments = mutableListOf()
+                    flushPage()
+                    pageIndex += 1
+                    lineIndex = 0
+                    usedPageHeight = 0f
+                    currentFragments = pending.map {
+                        if (it is LayoutFragment.Text) it.copy(y = it.y - shift) else it
+                    }.toMutableList()
+                }
+                currentLineHeight = max(currentLineHeight, requiredHeight)
                 currentFragments += LayoutFragment.Text(
                     unitId = "h$pageIndex$lineIndex${currentFragments.size}$index",
                     sourceText = token.source,
                     displayText = token.display,
                     x = settings.marginLeft + usedWidth,
-                    y = settings.marginTop + lineIndex * lineHeight,
+                    y = settings.marginTop + usedPageHeight,
                     fontSize = fontSize,
                     lineHeight = settings.lineHeight,
                     combineUpright = false,
@@ -433,11 +475,12 @@ class VerticalLayoutEngine(
                                 unitId = "hi$pageIndex$lineIndex${currentFragments.size}",
                                 resourceHref = element.getAttribute("src"),
                                 x = settings.marginLeft + usedWidth,
-                                y = settings.marginTop + lineIndex * lineHeight,
+                                y = settings.marginTop + usedPageHeight,
                                 width = size,
                                 height = size
                             )
                             usedWidth += size
+                            currentLineHeight = max(currentLineHeight, size)
                         }
                         isHeadingElement(element) -> {
                             if (currentFragments.isNotEmpty()) newLine()
@@ -448,8 +491,14 @@ class VerticalLayoutEngine(
                         }
                         isParagraphElement(element) -> {
                             if (currentFragments.isNotEmpty()) newLine()
+                            usedWidth = (nextState.resolvedFontSize(settings) * 2f).coerceAtMost(usableWidth * 0.3f)
                             for (child in XmlSupport.children(element)) walk(child, nextState)
                             newLine()
+                        }
+                        isBlockElement(element) -> {
+                            if (currentFragments.isNotEmpty()) newLine()
+                            for (child in XmlSupport.children(element)) walk(child, nextState)
+                            if (currentFragments.isNotEmpty()) newLine()
                         }
                         else -> for (child in XmlSupport.children(element)) walk(child, nextState)
                     }
@@ -1052,7 +1101,9 @@ class VerticalLayoutEngine(
     private fun LayoutFragment.positionAt(x: Float, y: Float): LayoutFragment {
         return when (this) {
             is LayoutFragment.Text -> copy(x = x, y = y)
-            is LayoutFragment.Ruby -> copy(x = x, y = y)
+            is LayoutFragment.Ruby -> copy(x = x, y = y,
+                baseFragments = baseFragments.map { it.copy(x = it.x + x - this.x, y = it.y + y - this.y) },
+                annotationX = annotationX + x - this.x, annotationY = annotationY + y - this.y)
             is LayoutFragment.Image -> copy(x = x, y = y)
         }
     }

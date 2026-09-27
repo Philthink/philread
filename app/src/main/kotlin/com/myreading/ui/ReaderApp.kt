@@ -39,6 +39,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -70,6 +71,7 @@ data class ReaderUiState(
     val orientation: ReadingOrientation = ReadingOrientation.VERTICAL,
     val fontChoice: ReaderFontChoice = ReaderFontChoice.SYSTEM,
     val fontSize: Float = 20f,
+    val appearance: ReadingAppearance = ReadingAppearance(),
     val lineHeight: Float = 1.25f,
     val columnGap: Float = 18f,
     val pageWidth: Float = 360f,
@@ -88,7 +90,7 @@ data class ReaderUiState(
             orientation = orientation,
             fontSize = fontSize,
             lineHeight = lineHeight,
-            columnGap = columnGap,
+            columnGap = columnGap * lineHeight / 1.25f,
             pageWidth = pageWidth,
             pageHeight = pageHeight
         )
@@ -107,6 +109,9 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             fontChoice = initialPreferences.fontChoice,
             themeMode = initialPreferences.themeMode,
             restReminderMinutes = initialPreferences.restReminderMinutes,
+            appearance = preferencesStore.loadAppearance(),
+            fontSize = preferencesStore.loadAppearance().fontSize,
+            lineHeight = preferencesStore.loadAppearance().lineHeight,
             orientation = initialPreferences.orientation
         )
     )
@@ -243,12 +248,18 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun increaseFont() = state.let {
-        state = it.copy(fontSize = (it.fontSize + 1f).coerceAtMost(40f), pageIndex = 0)
-        saveProgress()
+        setAppearance(it.appearance.copy(fontSize = (it.fontSize + 1f).coerceAtMost(40f)))
     }
 
     fun decreaseFont() = state.let {
-        state = it.copy(fontSize = (it.fontSize - 1f).coerceAtLeast(12f), pageIndex = 0)
+        setAppearance(it.appearance.copy(fontSize = (it.fontSize - 1f).coerceAtLeast(12f)))
+    }
+
+    fun setAppearance(value: ReadingAppearance) {
+        preferencesStore.saveAppearance(value)
+        val changed = state.fontSize != value.fontSize || state.lineHeight != value.lineHeight
+        state = state.copy(appearance = value, fontSize = value.fontSize,
+            lineHeight = value.lineHeight, pageIndex = if (changed) 0 else state.pageIndex)
         saveProgress()
     }
 
@@ -531,6 +542,7 @@ fun ReaderApp(
                             onFontChoice = viewModel::setFontChoice,
                             onThemeMode = viewModel::setThemeMode,
                             onRestReminder = viewModel::setRestReminder,
+                            onAppearance = viewModel::setAppearance,
                             onToggleOrientation = viewModel::toggleOrientation,
                             onViewportChanged = viewModel::updateViewport
                         )
@@ -642,6 +654,7 @@ private fun ReaderScreen(
     onFontChoice: (ReaderFontChoice) -> Unit,
     onThemeMode: (ReaderThemeMode) -> Unit,
     onRestReminder: (Int) -> Unit,
+    onAppearance: (ReadingAppearance) -> Unit,
     onToggleOrientation: () -> Unit,
     onViewportChanged: (Float, Float) -> Unit
 ) {
@@ -752,10 +765,12 @@ private fun ReaderScreen(
 
     if (showReadingSettings) {
         ReadingSettingsDialog(
+            appearance = state.appearance,
             selectedFont = state.fontChoice,
             restReminderMinutes = state.restReminderMinutes,
-            onApply = { font, reminderMinutes ->
+            onApply = { font, reminderMinutes, appearance ->
                 showReadingSettings = false
+                onAppearance(appearance)
                 onFontChoice(font)
                 onRestReminder(reminderMinutes)
             },
@@ -774,7 +789,7 @@ private fun ReaderScreen(
         )
     }
 
-    Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+    Column(modifier = Modifier.fillMaxSize().readingBackground(state.appearance.surroundColor, state.appearance.surroundImage, darkTheme)) {
         TopAppBar(
             title = { Text(chapterTitle) },
             actions = {
@@ -854,7 +869,7 @@ private fun ReaderScreen(
             }
             BoxWithConstraints(
                 modifier = Modifier.weight(1f).fillMaxHeight().padding(16.dp)
-                    .background(if (darkTheme) Color(0xFF171512) else Color.White)
+                    .readingBackground(state.appearance.paperColor, state.appearance.paperImage, darkTheme)
                     .pointerInput(state.chapterIndex, state.pageIndex) {
                         awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false)
@@ -913,7 +928,7 @@ private fun ReaderScreen(
             }
         }
         Box(
-            modifier = Modifier.fillMaxWidth().height(48.dp).background(MaterialTheme.colorScheme.background)
+            modifier = Modifier.fillMaxWidth().height(48.dp)
         ) {
             if (controlsVisible) {
                 BottomAppBar(
@@ -1037,11 +1052,13 @@ private fun BasicSettingsDialog(
 
 @Composable
 private fun ReadingSettingsDialog(
+    appearance: ReadingAppearance,
     selectedFont: ReaderFontChoice,
     restReminderMinutes: Int,
-    onApply: (ReaderFontChoice, Int) -> Unit,
+    onApply: (ReaderFontChoice, Int, ReadingAppearance) -> Unit,
     onDismiss: () -> Unit
 ) {
+    var pendingAppearance by remember { mutableStateOf(appearance) }
     var pendingFont by remember(selectedFont) { mutableStateOf(selectedFont) }
     var pendingReminderMinutes by remember(restReminderMinutes) { mutableIntStateOf(restReminderMinutes) }
     val reminderOptions = listOf(0, 15, 30, 45, 60)
@@ -1050,6 +1067,22 @@ private fun ReadingSettingsDialog(
         title = { Text("阅读设置") },
         text = {
             LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp)) {
+                item {
+                    Text("字号 ${pendingAppearance.fontSize.toInt()}")
+                    Slider(value = pendingAppearance.fontSize, onValueChange = {
+                        pendingAppearance = pendingAppearance.copy(fontSize = it)
+                    }, valueRange = 12f..40f, steps = 27)
+                    Text("行间距 %.2f 倍（竖排同时调整列距）".format(pendingAppearance.lineHeight))
+                    Slider(value = pendingAppearance.lineHeight, onValueChange = {
+                        pendingAppearance = pendingAppearance.copy(lineHeight = it)
+                    }, valueRange = 1.2f..2.5f)
+                    BackgroundChoice("页面背景", pendingAppearance.surroundColor, pendingAppearance.surroundImage) { color, uri ->
+                        pendingAppearance = pendingAppearance.copy(surroundColor = color, surroundImage = uri)
+                    }
+                    BackgroundChoice("内容背景", pendingAppearance.paperColor, pendingAppearance.paperImage) { color, uri ->
+                        pendingAppearance = pendingAppearance.copy(paperColor = color, paperImage = uri)
+                    }
+                }
                 item {
                     Text("阅读字体", style = MaterialTheme.typography.titleSmall)
                 }
@@ -1076,7 +1109,7 @@ private fun ReadingSettingsDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onApply(pendingFont, pendingReminderMinutes) }) { Text("完成") }
+            TextButton(onClick = { onApply(pendingFont, pendingReminderMinutes, pendingAppearance) }) { Text("完成") }
         }
     )
 }
@@ -1127,11 +1160,15 @@ private fun ContentsDialog(
         onDismissRequest = onDismiss,
         title = { Text("目录") },
         text = {
-            LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp)) {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 itemsIndexed(chapterTitles) { index, title ->
                     TextButton(onClick = { onSelect(index) }, modifier = Modifier.fillMaxWidth()) {
                         Text(
                             text = "${index + 1}. ${title.ifBlank { "未命名章节" }}",
+                            style = MaterialTheme.typography.bodyLarge.copy(lineHeight = 26.sp),
                             color = if (index == currentChapterIndex) MaterialTheme.colorScheme.primary else Color.Unspecified,
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -1189,7 +1226,6 @@ private fun VerticalPageCanvas(
         Typeface.create(fontChoice.layoutFamily, Typeface.NORMAL)
     }
     Canvas(modifier = modifier) {
-        drawRect(if (darkTheme) Color(0xFF171512) else Color(0xFFFFFCF7))
         val paint = android.graphics.Paint().apply {
             color = if (darkTheme) android.graphics.Color.rgb(232, 226, 214) else android.graphics.Color.BLACK
             isAntiAlias = true

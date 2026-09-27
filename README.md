@@ -210,6 +210,39 @@ flowchart LR
 **Affected Modules** – `ReaderApp`, `ReaderPreferencesStore`, `LayoutEngine`, and
 `LayoutEngineTest`.
 
+## Typography and backgrounds
+
+**Feature** - Headings reserve their actual column width or line height, including
+wrapped titles. Horizontal paragraphs start on a new line with a two-character
+first-line indent; continuation lines are not indented. The contents dialog adds
+spacing between entries and uses a readable multiline line height.
+
+**Design** - Reading settings save font size (12-40), line spacing (1.2-2.5), and
+independent outer-page and paper backgrounds. Spacing also scales vertical column
+gaps. Changes apply on confirmation, not on every slider movement. Changing size
+or spacing repaginates and returns to the current chapter's first page; background
+changes preserve position. Five light solid colors are available, defaulting to
+warm beige. Each background can alternatively use a local image selected through
+the document picker with persisted read permission. Images decode off the UI thread
+with a maximum sampled dimension of 2048px and a readability overlay; unreadable
+images fall back to the selected color. Night mode darkens both layers.
+
+**Call Flow**
+
+```mermaid
+flowchart LR
+    Settings[Reading settings drafts] --> Confirm[Confirm and persist]
+    Confirm --> Metrics[Font size and line spacing]
+    Metrics --> Layout[Measure line height and column width]
+    Layout --> Pages[Repaginate]
+    Confirm --> Background[Separate outer and paper backgrounds]
+    Background --> Image[Sample image on IO thread]
+    Image --> Canvas[Background behind native text]
+```
+
+**Affected Modules** - `LayoutEngine`, `ReadingAppearance`, `ReaderPreferencesStore`,
+`ReaderApp`, `ReadingBackground`, and layout regression tests.
+
 ## Build
 
 Use JDK 17 and the included Gradle wrapper:

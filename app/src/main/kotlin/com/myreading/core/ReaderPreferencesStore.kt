@@ -39,6 +39,24 @@ data class ReaderPreferences(
 class ReaderPreferencesStore(context: Context) {
     private val preferences = context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
+    fun loadAppearance(): ReadingAppearance = ReadingAppearance(
+        fontSize = preferences.getFloat("font-size", 20f).coerceIn(12f, 40f),
+        lineHeight = preferences.getFloat("line-height", 1.25f).coerceIn(1.2f, 2.5f),
+        surroundColor = preferences.getLong("surround-color", 0xFFF8F3EA),
+        paperColor = preferences.getLong("paper-color", 0xFFFFFCF7),
+        surroundImage = preferences.getString("surround-image", "").orEmpty(),
+        paperImage = preferences.getString("paper-image", "").orEmpty()
+    )
+
+    fun saveAppearance(value: ReadingAppearance) {
+        preferences.edit().putFloat("font-size", value.fontSize)
+            .putFloat("line-height", value.lineHeight)
+            .putLong("surround-color", value.surroundColor)
+            .putLong("paper-color", value.paperColor)
+            .putString("surround-image", value.surroundImage)
+            .putString("paper-image", value.paperImage).apply()
+    }
+
     fun load(): ReaderPreferences = ReaderPreferences(
         themeMode = ReaderThemeMode.fromStorage(preferences.getString(KEY_THEME, null)),
         fontChoice = ReaderFontChoice.fromStorage(preferences.getString(KEY_FONT, null)),

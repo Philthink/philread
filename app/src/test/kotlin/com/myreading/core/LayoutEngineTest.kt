@@ -30,6 +30,38 @@ class LayoutEngineTest {
     }
 
     @Test
+    fun largeHeadingsReserveTheirActualHeightAndWidth() {
+        val html = """<html xmlns="http://www.w3.org/1999/xhtml"><body><h1 style="font-size:3em">甲乙丙丁戊己庚辛壬癸</h1><h2 style="font-size:2em">副題</h2><p>正文</p></body></html>"""
+        for (orientation in ReadingOrientation.entries) {
+            val pages = layoutPages(html, orientation = orientation)
+            assertTrue(pages.isNotEmpty())
+            pages.forEach { page ->
+                page.columns.zipWithNext().forEach { (a, b) ->
+                    if (orientation == ReadingOrientation.HORIZONTAL) {
+                        assertTrue(b.y >= a.y + a.height)
+                    } else {
+                        assertTrue(b.x + b.width <= a.x)
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun horizontalParagraphIndentAppliesOnlyToFirstLine() {
+        val pages = layoutPages(
+            """<html xmlns="http://www.w3.org/1999/xhtml"><body><p>甲${"乙".repeat(30)}</p><p>丙丁</p></body></html>""",
+            orientation = ReadingOrientation.HORIZONTAL
+        )
+        val lines = pages.flatMap { it.columns }
+        val fragments = lines.flatMap { it.fragments }.filterIsInstance<LayoutFragment.Text>()
+        assertEquals(settings.marginLeft + 40f, fragments.first { it.sourceText == "甲" }.x, 0.01f)
+        assertEquals(settings.marginLeft + 40f, fragments.first { it.sourceText == "丙" }.x, 0.01f)
+        assertEquals(settings.marginLeft, (lines[1].fragments.first() as LayoutFragment.Text).x, 0.01f)
+        assertTrue(fragments.first { it.sourceText == "丙" }.y > fragments.first().y)
+    }
+
+    @Test
     fun rubyPositionRightPlacesAnnotationBesideBase() {
         val fragments = layoutFragments(
             """
