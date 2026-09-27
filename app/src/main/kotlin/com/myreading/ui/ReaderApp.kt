@@ -173,7 +173,10 @@ private val EPUB_MIME_TYPES = arrayOf(
 )
 
 @Composable
-fun ReaderApp() {
+fun ReaderApp(
+    externalEpubUri: Uri? = null,
+    onExternalEpubConsumed: () -> Unit = {}
+) {
     val context = LocalContext.current
     val viewModel: ReaderViewModel = viewModel(factory = ReaderViewModel.factory(context.applicationContext as Application))
     val state = viewModel.state
@@ -183,6 +186,13 @@ fun ReaderApp() {
                 context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             viewModel.openEpub(uri)
+        }
+    }
+
+    LaunchedEffect(externalEpubUri) {
+        externalEpubUri?.let { uri ->
+            viewModel.openEpub(uri)
+            onExternalEpubConsumed()
         }
     }
 

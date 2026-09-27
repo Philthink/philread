@@ -8,7 +8,8 @@ not rotate a WebView or rasterize book pages.
 
 **Feature** – Imports local EPUB files through Android's system document picker and
 opens the first readable spine chapter. EPUB providers that expose files as EPUB,
-ZIP, or generic binary MIME types are accepted.
+ZIP, or generic binary MIME types are accepted. Huawei/HarmonyOS file managers can
+also open an EPUB directly with myReading through Android's `ACTION_VIEW` flow.
 
 **Design** – Some EPUB books begin with an SVG-only cover. The current layout engine
 does not draw SVG covers, so selecting spine item zero produced an empty page even
@@ -20,6 +21,8 @@ reading at the first linear chapter containing text.
 ```mermaid
 flowchart LR
     Picker[System document picker] --> Copy[Copy URI to app cache]
+    FileManager[Huawei file manager] --> ViewIntent[ACTION_VIEW]
+    ViewIntent --> Copy
     Copy --> Parser[EpubParser]
     Parser --> Book[Book and spine]
     Book --> Initial[Find first readable chapter]
@@ -27,8 +30,8 @@ flowchart LR
     Layout --> Canvas[Compose Canvas]
 ```
 
-**Affected Modules** – `ReaderViewModel`, `ReadingNavigation`, `EpubParser`, and
-`VerticalLayoutEngine`.
+**Affected Modules** – `MainActivity`, `ReaderViewModel`, `ReadingNavigation`,
+`EpubParser`, and `VerticalLayoutEngine`.
 
 ## Build
 
