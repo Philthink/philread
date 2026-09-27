@@ -861,17 +861,6 @@ private fun ReaderScreen(
             BoxWithConstraints(
                 modifier = Modifier.weight(1f).fillMaxHeight().padding(16.dp)
                     .background(if (darkTheme) Color(0xFF171512) else Color.White)
-                    .graphicsLayer {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && contentBlur > 0f) {
-                            renderEffect = RenderEffect.createBlurEffect(
-                                contentBlur,
-                                contentBlur,
-                                Shader.TileMode.CLAMP
-                            ).asComposeRenderEffect()
-                        } else {
-                            renderEffect = null
-                        }
-                    }
                     .pointerInput(state.chapterIndex, state.pageIndex) {
                         awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false)
@@ -922,6 +911,28 @@ private fun ReaderScreen(
                             darkTheme = darkTheme,
                             modifier = Modifier.fillMaxSize()
                         )
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && contentBlur > 0f) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .width(sidebarWidth)
+                                    .graphicsLayer {
+                                        clip = true
+                                        renderEffect = RenderEffect.createBlurEffect(
+                                            contentBlur,
+                                            contentBlur,
+                                            Shader.TileMode.CLAMP
+                                        ).asComposeRenderEffect()
+                                    }
+                            ) {
+                                VerticalPageCanvas(
+                                    page = page,
+                                    fontChoice = state.fontChoice,
+                                    darkTheme = darkTheme,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                            }
+                        }
                     }
                 }
                 if (currentBookmarked) BookmarkRibbon(modifier = Modifier.align(Alignment.TopEnd).padding(end = 5.dp))
