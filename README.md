@@ -100,8 +100,8 @@ open at their last saved chapter and page, and a long press removes a book from 
 current list without affecting the other list. A star toggles shelf membership. The
 sidebar footer uses compact chapter/page progress, while the fixed bottom area shows
 the system time and current reading-session duration. The reading page reserves a
-right gutter and displays a red ribbon there only when the current page is
-bookmarked.
+compact 28dp right gutter and displays a scaled red ribbon there only when the
+current page is bookmarked.
 
 **Design** – Imported EPUB files are copied to app-private storage under a stable
 SHA-256 identity so document-provider permissions are not required after a restart.
@@ -128,6 +128,42 @@ flowchart LR
 ```
 
 **Affected Modules** – `LibraryStore`, `ReaderViewModel`, and `ReaderApp`.
+
+## Reader appearance and rest reminders
+
+**Feature** – Sidebar controls use a content-driven width and consistent single-line
+labels. Chapter navigation sits directly above the shelf toggle, and bottom-bar time
+labels share one text style. A settings menu opens separate basic and reading
+settings: basic settings select system, light, or dark appearance; reading settings
+select the system font or Song typeface and configure 15, 30, 45, or 60-minute rest
+reminders.
+
+**Design** – Appearance settings are stored independently from each book so they
+apply across the library. Theme selection wraps the complete Compose hierarchy and
+also supplies explicit paper and ink colors to the custom Canvas renderer. Font
+selection participates in the pagination fingerprint and configures the Canvas
+`Typeface`, which forces native repagination instead of visually scaling an existing
+page. Reminder timing is scoped to the current reading session and repeats from the
+time each reminder is issued.
+
+**Call Flow**
+
+```mermaid
+flowchart LR
+    Settings[Bottom settings button] --> Menu{Settings menu}
+    Menu --> Basic[Basic settings]
+    Basic --> Theme[System, light, or dark]
+    Menu --> Reading[Reading settings]
+    Reading --> Font[System or Song font]
+    Font --> Paginate[Rebuild vertical pagination]
+    Paginate --> Canvas[Draw with selected Typeface]
+    Reading --> Interval[Rest interval]
+    Interval --> Session[Current reading session timer]
+    Session --> Reminder[Show rest reminder]
+```
+
+**Affected Modules** – `ReaderPreferencesStore`, `ReaderViewModel`, `ReaderApp`, and
+`VerticalLayoutEngine` pagination settings.
 
 ## Build
 

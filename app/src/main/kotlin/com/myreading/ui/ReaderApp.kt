@@ -3,17 +3,21 @@ package com.myreading.ui
 import android.app.Application
 import android.content.Context
 import android.content.Intent
+import android.graphics.Typeface
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -27,6 +31,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -56,6 +61,7 @@ data class ReaderUiState(
     val book: Book? = null,
     val chapterIndex: Int = 0,
     val pageIndex: Int = 0,
+    val fontChoice: ReaderFontChoice = ReaderFontChoice.SYSTEM,
     val fontSize: Float = 20f,
     val lineHeight: Float = 1.25f,
     val columnGap: Float = 18f,
@@ -65,10 +71,13 @@ data class ReaderUiState(
     val storedBooks: List<StoredBook> = emptyList(),
     val currentBookId: String? = null,
     val section: ReaderSection = ReaderSection.SHELF,
-    val sessionStartedAt: Long = 0L
+    val sessionStartedAt: Long = 0L,
+    val themeMode: ReaderThemeMode = ReaderThemeMode.SYSTEM,
+    val restReminderMinutes: Int = 0
 ) {
     val layoutSettings: LayoutSettings
         get() = LayoutSettings(
+            fontFamily = fontChoice.layoutFamily,
             fontSize = fontSize,
             lineHeight = lineHeight,
             columnGap = columnGap,
@@ -81,8 +90,17 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val parser = EpubParser()
     private val layoutEngine = VerticalLayoutEngine(LayoutCache(16))
     private val libraryStore = LibraryStore(app)
+    private val preferencesStore = ReaderPreferencesStore(app)
+    private val initialPreferences = preferencesStore.load()
 
-    var state by mutableStateOf(ReaderUiState(storedBooks = libraryStore.books()))
+    var state by mutableStateOf(
+        ReaderUiState(
+            storedBooks = libraryStore.books(),
+            fontChoice = initialPreferences.fontChoice,
+            themeMode = initialPreferences.themeMode,
+            restReminderMinutes = initialPreferences.restReminderMinutes
+        )
+    )
         private set
 
     companion object {
@@ -223,6 +241,23 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     fun decreaseFont() = state.let {
         state = it.copy(fontSize = (it.fontSize - 1f).coerceAtLeast(12f), pageIndex = 0)
         saveProgress()
+    }
+
+    fun setFontChoice(choice: ReaderFontChoice) {
+        if (state.fontChoice == choice) return
+        preferencesStore.setFont(choice)
+        state = state.copy(fontChoice = choice, pageIndex = 0)
+        saveProgress()
+    }
+
+    fun setThemeMode(mode: ReaderThemeMode) {
+        preferencesStore.setTheme(mode)
+        state = state.copy(themeMode = mode)
+    }
+
+    fun setRestReminder(minutes: Int) {
+        preferencesStore.setRestReminder(minutes)
+        state = state.copy(restReminderMinutes = minutes)
     }
 
     fun updateViewport(width: Float, height: Float) {
@@ -390,6 +425,11 @@ fun ReaderApp(
     val context = LocalContext.current
     val viewModel: ReaderViewModel = viewModel(factory = ReaderViewModel.factory(context.applicationContext as Application))
     val state = viewModel.state
+    val darkTheme = when (state.themeMode) {
+        ReaderThemeMode.SYSTEM -> isSystemInDarkTheme()
+        ReaderThemeMode.LIGHT -> false
+        ReaderThemeMode.DARK -> true
+    }
     val openDocument = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             runCatching {
@@ -406,7 +446,7 @@ fun ReaderApp(
         }
     }
 
-    MaterialTheme {
+    MaterialTheme(colorScheme = if (darkTheme) darkColorScheme() else lightColorScheme()) {
         Surface(modifier = Modifier.fillMaxSize()) {
             when (state.section) {
                 ReaderSection.SHELF -> CollectionScreen(
@@ -449,6 +489,7 @@ fun ReaderApp(
                             pageCount = pages.size,
                             page = pages.getOrNull(state.pageIndex),
                             inShelf = inShelf,
+                            darkTheme = darkTheme,
                             onToggleShelf = viewModel::toggleCurrentShelf,
                             onShowShelf = viewModel::showShelf,
                             onShowHistory = viewModel::showHistory,
@@ -466,6 +507,9 @@ fun ReaderApp(
                             onRemoveBookmark = viewModel::removeCurrentBookmark,
                             onFontPlus = viewModel::increaseFont,
                             onFontMinus = viewModel::decreaseFont,
+                            onFontChoice = viewModel::setFontChoice,
+                            onThemeMode = viewModel::setThemeMode,
+                            onRestReminder = viewModel::setRestReminder,
                             onViewportChanged = viewModel::updateViewport
                         )
                     }
@@ -489,7 +533,7 @@ private fun CollectionScreen(
     onShowShelf: () -> Unit,
     onShowHistory: () -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxSize().background(Color(0xFFF4F0E8))) {
+    Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         TopAppBar(
             title = { Text(title) },
             actions = {
@@ -557,6 +601,7 @@ private fun ReaderScreen(
     pageCount: Int,
     page: PageLayout?,
     inShelf: Boolean,
+    darkTheme: Boolean,
     onToggleShelf: () -> Unit,
     onShowShelf: () -> Unit,
     onShowHistory: () -> Unit,
@@ -571,12 +616,19 @@ private fun ReaderScreen(
     onRemoveBookmark: () -> Unit,
     onFontPlus: () -> Unit,
     onFontMinus: () -> Unit,
+    onFontChoice: (ReaderFontChoice) -> Unit,
+    onThemeMode: (ReaderThemeMode) -> Unit,
+    onRestReminder: (Int) -> Unit,
     onViewportChanged: (Float, Float) -> Unit
 ) {
     var controlsVisible by rememberSaveable { mutableStateOf(true) }
     var controlsActivity by remember { mutableIntStateOf(0) }
     var showContents by remember { mutableStateOf(false) }
     var showBookmarks by remember { mutableStateOf(false) }
+    var showSettingsMenu by remember { mutableStateOf(false) }
+    var showBasicSettings by remember { mutableStateOf(false) }
+    var showReadingSettings by remember { mutableStateOf(false) }
+    var showRestReminder by remember { mutableStateOf(false) }
     val swipeThreshold = with(LocalDensity.current) { 72.dp.toPx() }
     val currentPosition = ReadingPosition(state.chapterIndex, state.pageIndex)
     val currentBookmarked = currentPosition in state.bookmarks
@@ -586,6 +638,17 @@ private fun ReaderScreen(
         while (true) {
             clockMillis = System.currentTimeMillis()
             delay(1_000)
+        }
+    }
+
+    LaunchedEffect(state.sessionStartedAt, state.restReminderMinutes) {
+        if (state.sessionStartedAt <= 0L || state.restReminderMinutes <= 0) return@LaunchedEffect
+        val intervalMillis = state.restReminderMinutes * 60_000L
+        var nextReminderAt = state.sessionStartedAt + intervalMillis
+        while (true) {
+            delay((nextReminderAt - System.currentTimeMillis()).coerceAtLeast(0L))
+            showRestReminder = true
+            nextReminderAt = System.currentTimeMillis() + intervalMillis
         }
     }
 
@@ -599,8 +662,21 @@ private fun ReaderScreen(
         controlsActivity += 1
     }
 
-    LaunchedEffect(controlsVisible, controlsActivity, state.chapterIndex, state.pageIndex) {
-        if (controlsVisible) {
+    LaunchedEffect(
+        controlsVisible,
+        controlsActivity,
+        state.chapterIndex,
+        state.pageIndex,
+        showContents,
+        showBookmarks,
+        showSettingsMenu,
+        showBasicSettings,
+        showReadingSettings,
+        showRestReminder
+    ) {
+        val overlayVisible = showContents || showBookmarks || showSettingsMenu ||
+            showBasicSettings || showReadingSettings || showRestReminder
+        if (controlsVisible && !overlayVisible) {
             delay(10_000)
             controlsVisible = false
         }
@@ -630,7 +706,43 @@ private fun ReaderScreen(
         )
     }
 
-    Column(modifier = Modifier.fillMaxSize().background(Color(0xFFF8F3EA))) {
+
+    if (showBasicSettings) {
+        BasicSettingsDialog(
+            selectedTheme = state.themeMode,
+            onApply = { theme ->
+                showBasicSettings = false
+                onThemeMode(theme)
+            },
+            onDismiss = { showBasicSettings = false }
+        )
+    }
+
+    if (showReadingSettings) {
+        ReadingSettingsDialog(
+            selectedFont = state.fontChoice,
+            restReminderMinutes = state.restReminderMinutes,
+            onApply = { font, reminderMinutes ->
+                showReadingSettings = false
+                onFontChoice(font)
+                onRestReminder(reminderMinutes)
+            },
+            onDismiss = { showReadingSettings = false }
+        )
+    }
+
+    if (showRestReminder) {
+        AlertDialog(
+            onDismissRequest = { showRestReminder = false },
+            title = { Text("休息提醒") },
+            text = { Text("已经连续阅读 ${state.restReminderMinutes} 分钟，请休息一下。") },
+            confirmButton = {
+                TextButton(onClick = { showRestReminder = false }) { Text("知道了") }
+            }
+        )
+    }
+
+    Column(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         TopAppBar(
             title = { Text(chapterTitle) },
             actions = {
@@ -647,27 +759,33 @@ private fun ReaderScreen(
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
             if (controlsVisible) {
                 Column(
-                    modifier = Modifier.width(120.dp).fillMaxHeight().background(Color(0xFFF0E4D2)),
+                    modifier = Modifier
+                        .width(IntrinsicSize.Max)
+                        .widthIn(min = 132.dp, max = 180.dp)
+                        .fillMaxHeight()
+                        .background(MaterialTheme.colorScheme.surfaceVariant),
                     verticalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(
                         modifier = Modifier.padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        OutlinedButton(onClick = onShowShelf, modifier = Modifier.fillMaxWidth()) { Text("书架") }
-                        OutlinedButton(onClick = onShowHistory, modifier = Modifier.fillMaxWidth()) { Text("阅读历史") }
-                        OutlinedButton(
+                        SidebarButton(label = "书架", onClick = onShowShelf)
+                        SidebarButton(label = "阅读历史", onClick = onShowHistory)
+                        SidebarButton(
+                            label = "目录",
                             onClick = { showContents = true },
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text("目录") }
-                        OutlinedButton(
+                        )
+                        SidebarButton(
+                            label = "书签 ${state.bookmarks.size}",
                             onClick = { showBookmarks = true },
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text("书签 ${state.bookmarks.size}") }
+                        )
                     }
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        SidebarButton(label = "上一章", onClick = onPreviousChapter)
+                        SidebarButton(label = "下一章", onClick = onNextChapter)
                         TextButton(onClick = onToggleShelf, modifier = Modifier.fillMaxWidth()) {
-                            Text(if (inShelf) "★ 移出书架" else "☆ 加入书架")
+                            SingleLineLabel(if (inShelf) "★ 移出书架" else "☆ 加入书架")
                         }
                         Text(
                             "章节 ${state.chapterIndex + 1} / ${maxOf(chapterTitles.size, 1)}",
@@ -677,14 +795,12 @@ private fun ReaderScreen(
                             if (pageCount == 0) "页面 0 / 0" else "页面 ${state.pageIndex + 1} / $pageCount",
                             style = MaterialTheme.typography.labelSmall
                         )
-                        OutlinedButton(onClick = onPreviousChapter, modifier = Modifier.fillMaxWidth()) { Text("上一章") }
-                        OutlinedButton(onClick = onNextChapter, modifier = Modifier.fillMaxWidth()) { Text("下一章") }
                     }
                 }
             }
             BoxWithConstraints(
                 modifier = Modifier.weight(1f).fillMaxHeight().padding(16.dp)
-                    .background(Color.White)
+                    .background(if (darkTheme) Color(0xFF171512) else Color.White)
                     .pointerInput(state.chapterIndex, state.pageIndex) {
                         awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false)
@@ -719,7 +835,7 @@ private fun ReaderScreen(
                         }
                     }
             ) {
-                BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(end = 44.dp)) {
+                BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(end = 28.dp)) {
                     val density = LocalDensity.current
                     LaunchedEffect(maxWidth, maxHeight) {
                         with(density) {
@@ -729,14 +845,19 @@ private fun ReaderScreen(
                     if (page == null) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("没有可显示页面") }
                     } else {
-                        VerticalPageCanvas(page = page, modifier = Modifier.fillMaxSize())
+                        VerticalPageCanvas(
+                            page = page,
+                            fontChoice = state.fontChoice,
+                            darkTheme = darkTheme,
+                            modifier = Modifier.fillMaxSize()
+                        )
                     }
                 }
-                if (currentBookmarked) BookmarkRibbon(modifier = Modifier.align(Alignment.TopEnd).padding(end = 9.dp))
+                if (currentBookmarked) BookmarkRibbon(modifier = Modifier.align(Alignment.TopEnd).padding(end = 5.dp))
             }
         }
         Box(
-            modifier = Modifier.fillMaxWidth().height(80.dp).background(Color(0xFFF8F3EA))
+            modifier = Modifier.fillMaxWidth().height(80.dp).background(MaterialTheme.colorScheme.background)
         ) {
             if (controlsVisible) {
                 BottomAppBar(modifier = Modifier.fillMaxSize()) {
@@ -746,11 +867,36 @@ private fun ReaderScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
-                            Text("系统时间 $systemTime", style = MaterialTheme.typography.labelLarge)
+                            Text("系统时间 $systemTime", style = MaterialTheme.typography.labelMedium)
                             Text("本次阅读 $readingDuration", style = MaterialTheme.typography.labelMedium)
                         }
                         Text("下拉添加书签 · 上拉取消", style = MaterialTheme.typography.bodySmall)
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Box {
+                                OutlinedButton(onClick = {
+                                    showReaderControls()
+                                    showSettingsMenu = true
+                                }) { Text("设置") }
+                                DropdownMenu(
+                                    expanded = showSettingsMenu,
+                                    onDismissRequest = { showSettingsMenu = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("基础设置") },
+                                        onClick = {
+                                            showSettingsMenu = false
+                                            showBasicSettings = true
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("阅读设置") },
+                                        onClick = {
+                                            showSettingsMenu = false
+                                            showReadingSettings = true
+                                        }
+                                    )
+                                }
+                            }
                             OutlinedButton(onClick = onPreviousPage) { Text("上一页") }
                             OutlinedButton(onClick = onNextPage) { Text("下一页") }
                         }
@@ -758,6 +904,116 @@ private fun ReaderScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SidebarButton(label: String, onClick: () -> Unit) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+    ) {
+        SingleLineLabel(label)
+    }
+}
+
+@Composable
+private fun SingleLineLabel(text: String) {
+    Text(
+        text = text,
+        maxLines = 1,
+        softWrap = false,
+        overflow = TextOverflow.Clip,
+        style = MaterialTheme.typography.labelLarge
+    )
+}
+
+@Composable
+private fun BasicSettingsDialog(
+    selectedTheme: ReaderThemeMode,
+    onApply: (ReaderThemeMode) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var pendingTheme by remember(selectedTheme) { mutableStateOf(selectedTheme) }
+    val themes = listOf(
+        ReaderThemeMode.SYSTEM to "跟随系统",
+        ReaderThemeMode.LIGHT to "白天",
+        ReaderThemeMode.DARK to "夜间"
+    )
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("基础设置") },
+        text = {
+            Column {
+                Text("主题", style = MaterialTheme.typography.titleSmall)
+                themes.forEach { (theme, label) ->
+                    SettingsRadioRow(
+                        label = label,
+                        selected = pendingTheme == theme,
+                        onClick = { pendingTheme = theme }
+                    )
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { onApply(pendingTheme) }) { Text("完成") } }
+    )
+}
+
+@Composable
+private fun ReadingSettingsDialog(
+    selectedFont: ReaderFontChoice,
+    restReminderMinutes: Int,
+    onApply: (ReaderFontChoice, Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var pendingFont by remember(selectedFont) { mutableStateOf(selectedFont) }
+    var pendingReminderMinutes by remember(restReminderMinutes) { mutableIntStateOf(restReminderMinutes) }
+    val reminderOptions = listOf(0, 15, 30, 45, 60)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("阅读设置") },
+        text = {
+            LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp)) {
+                item {
+                    Text("阅读字体", style = MaterialTheme.typography.titleSmall)
+                }
+                items(ReaderFontChoice.entries.size) { index ->
+                    val font = ReaderFontChoice.entries[index]
+                    SettingsRadioRow(
+                        label = font.displayName,
+                        selected = pendingFont == font,
+                        onClick = { pendingFont = font }
+                    )
+                }
+                item {
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                    Text("休息时间提醒", style = MaterialTheme.typography.titleSmall)
+                }
+                items(reminderOptions.size) { index ->
+                    val minutes = reminderOptions[index]
+                    SettingsRadioRow(
+                        label = if (minutes == 0) "关闭提醒" else "$minutes 分钟",
+                        selected = pendingReminderMinutes == minutes,
+                        onClick = { pendingReminderMinutes = minutes }
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onApply(pendingFont, pendingReminderMinutes) }) { Text("完成") }
+        }
+    )
+}
+
+@Composable
+private fun SettingsRadioRow(label: String, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Text(label, maxLines = 1, softWrap = false)
     }
 }
 
@@ -772,7 +1028,7 @@ private fun formatReadingDuration(durationMillis: Long): String {
 
 @Composable
 private fun BookmarkRibbon(modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier.width(24.dp).height(64.dp)) {
+    Canvas(modifier = modifier.width(18.dp).height(52.dp)) {
         val ribbon = Path().apply {
             moveTo(0f, 0f)
             lineTo(size.width, 0f)
@@ -850,14 +1106,20 @@ private fun BookmarksDialog(
 @Composable
 private fun VerticalPageCanvas(
     page: PageLayout,
+    fontChoice: ReaderFontChoice,
+    darkTheme: Boolean,
     modifier: Modifier = Modifier
 ) {
+    val typeface = remember(fontChoice) {
+        Typeface.create(fontChoice.layoutFamily, Typeface.NORMAL)
+    }
     Canvas(modifier = modifier) {
-        drawRect(Color(0xFFFFFCF7))
+        drawRect(if (darkTheme) Color(0xFF171512) else Color(0xFFFFFCF7))
         val paint = android.graphics.Paint().apply {
-            color = android.graphics.Color.BLACK
+            color = if (darkTheme) android.graphics.Color.rgb(232, 226, 214) else android.graphics.Color.BLACK
             isAntiAlias = true
             textAlign = android.graphics.Paint.Align.LEFT
+            this.typeface = typeface
         }
         fun drawNativeText(text: String, x: Float, y: Float, fontSize: Float) {
             if (text.isBlank()) return
