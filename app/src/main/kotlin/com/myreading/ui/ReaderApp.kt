@@ -161,7 +161,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private fun readableImportError(error: Throwable): String {
         val detail = generateSequence(error) { it.cause }
             .mapNotNull { it.message?.takeIf(String::isNotBlank) }
-            .firstOrNull()
+            .lastOrNull()
         return if (detail == null) "打开 EPUB 失败" else "打开 EPUB 失败：$detail"
     }
 }

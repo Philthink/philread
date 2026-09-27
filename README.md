@@ -14,7 +14,10 @@ also open an EPUB directly with myReading through Android's `ACTION_VIEW` flow.
 **Design** – Some EPUB books begin with an SVG-only cover. The current layout engine
 does not draw SVG covers, so selecting spine item zero produced an empty page even
 though parsing succeeded. Import now keeps the book's original spine order but starts
-reading at the first linear chapter containing text.
+reading at the first linear chapter containing text. XML security features are
+enabled on a best-effort basis because Android and desktop JAXP providers support
+different optional feature sets; an entity resolver still blocks external entity
+loading on every platform.
 
 **Call Flow**
 
@@ -31,7 +34,7 @@ flowchart LR
 ```
 
 **Affected Modules** – `MainActivity`, `ReaderViewModel`, `ReadingNavigation`,
-`EpubParser`, and `VerticalLayoutEngine`.
+`EpubParser`, `XmlSupport`, and `VerticalLayoutEngine`.
 
 ## Build
 

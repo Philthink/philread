@@ -8,8 +8,10 @@ import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
+import java.io.StringReader
 import javax.xml.XMLConstants
 import javax.xml.parsers.DocumentBuilderFactory
+import org.xml.sax.InputSource
 
 object XmlSupport {
     private val doctypePattern = Regex("(?is)<!DOCTYPE[^>]*>")
@@ -21,14 +23,19 @@ object XmlSupport {
                 isNamespaceAware = true
                 isExpandEntityReferences = false
                 isValidating = false
-                setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true)
-                setFeature("http://xml.org/sax/features/external-general-entities", false)
-                setFeature("http://xml.org/sax/features/external-parameter-entities", false)
-                setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
+                // Android and desktop JAXP expose different optional feature sets.
+                trySetFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true)
+                trySetFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
+                trySetFeature("http://xml.org/sax/features/external-general-entities", false)
+                trySetFeature("http://xml.org/sax/features/external-parameter-entities", false)
+                trySetFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false)
                 runCatching { setAttribute("http://javax.xml.XMLConstants/property/accessExternalDTD", "") }
                 runCatching { setAttribute("http://javax.xml.XMLConstants/property/accessExternalSchema", "") }
             }
-            return factory.newDocumentBuilder().parse(ByteArrayInputStream(sanitized))
+            val builder = factory.newDocumentBuilder().apply {
+                setEntityResolver { _, _ -> InputSource(StringReader("")) }
+            }
+            return builder.parse(ByteArrayInputStream(sanitized))
         } catch (e: Exception) {
             throw IOException("Failed to parse XML", e)
         }
@@ -46,6 +53,10 @@ object XmlSupport {
 
     private fun sanitizeXmlString(xml: String): String {
         return xml.replace(doctypePattern, "")
+    }
+
+    private fun DocumentBuilderFactory.trySetFeature(name: String, value: Boolean) {
+        runCatching { setFeature(name, value) }
     }
 
     fun localName(node: Node): String = node.localName ?: node.nodeName
