@@ -7,7 +7,9 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
@@ -20,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -35,7 +38,17 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.security.MessageDigest
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import kotlin.math.abs
+
+enum class ReaderSection {
+    SHELF,
+    HISTORY,
+    READER
+}
 
 data class ReaderUiState(
     val loading: Boolean = false,
@@ -48,7 +61,11 @@ data class ReaderUiState(
     val columnGap: Float = 18f,
     val pageWidth: Float = 360f,
     val pageHeight: Float = 640f,
-    val bookmarks: Set<ReadingPosition> = emptySet()
+    val bookmarks: Set<ReadingPosition> = emptySet(),
+    val storedBooks: List<StoredBook> = emptyList(),
+    val currentBookId: String? = null,
+    val section: ReaderSection = ReaderSection.SHELF,
+    val sessionStartedAt: Long = 0L
 ) {
     val layoutSettings: LayoutSettings
         get() = LayoutSettings(
@@ -61,11 +78,12 @@ data class ReaderUiState(
 }
 
 class ReaderViewModel(app: Application) : AndroidViewModel(app) {
-    var state by mutableStateOf(ReaderUiState())
-        private set
-
     private val parser = EpubParser()
     private val layoutEngine = VerticalLayoutEngine(LayoutCache(16))
+    private val libraryStore = LibraryStore(app)
+
+    var state by mutableStateOf(ReaderUiState(storedBooks = libraryStore.books()))
+        private set
 
     companion object {
         fun factory(application: Application): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
@@ -80,19 +98,19 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         state = state.copy(loading = true, errorMessage = null)
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val file = copyToTempFile(getApplication(), uri)
+                val (bookId, file) = copyToLibraryFile(getApplication(), uri)
                 val book = parser.parse(file)
                 require(book.chapters.isNotEmpty()) { "EPUB 中没有可阅读章节" }
                 val initialChapterIndex = book.initialReadableChapterIndex()
+                val record = libraryStore.recordOpened(
+                    id = bookId,
+                    filePath = file.absolutePath,
+                    title = book.metadata.title ?: file.nameWithoutExtension,
+                    creator = book.metadata.creator.orEmpty(),
+                    defaultChapterIndex = initialChapterIndex
+                )
                 withContext(Dispatchers.Main) {
-                    state = state.copy(
-                        loading = false,
-                        errorMessage = null,
-                        book = book,
-                        chapterIndex = initialChapterIndex,
-                        pageIndex = 0,
-                        bookmarks = loadBookmarks(book)
-                    )
+                    showBook(book, record)
                 }
             } catch (error: Throwable) {
                 withContext(Dispatchers.Main) {
@@ -102,12 +120,55 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun openStoredBook(record: StoredBook) {
+        state = state.copy(loading = true, errorMessage = null)
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val file = File(record.filePath)
+                require(file.isFile) { "书籍文件已不存在" }
+                val book = parser.parse(file)
+                val openedRecord = libraryStore.recordOpened(
+                    id = record.id,
+                    filePath = record.filePath,
+                    title = record.title,
+                    creator = record.creator,
+                    defaultChapterIndex = book.initialReadableChapterIndex()
+                )
+                withContext(Dispatchers.Main) { showBook(book, openedRecord) }
+            } catch (error: Throwable) {
+                withContext(Dispatchers.Main) {
+                    state = state.copy(loading = false, errorMessage = readableImportError(error))
+                }
+            }
+        }
+    }
+
+    private fun showBook(book: Book, record: StoredBook) {
+        val chapterIndex = record.lastChapterIndex.coerceIn(0, book.chapters.lastIndex)
+        state = state.copy(
+            loading = false,
+            errorMessage = null,
+            book = book,
+            chapterIndex = chapterIndex,
+            pageIndex = record.lastPageIndex.coerceAtLeast(0),
+            bookmarks = loadBookmarks(book),
+            storedBooks = libraryStore.books(),
+            currentBookId = record.id,
+            section = ReaderSection.READER,
+            sessionStartedAt = System.currentTimeMillis()
+        )
+        val lastPageIndex = currentPages().lastIndex.coerceAtLeast(0)
+        if (state.pageIndex > lastPageIndex) state = state.copy(pageIndex = lastPageIndex)
+        saveProgress()
+    }
+
     fun nextPage() {
         val book = state.book ?: return
         val position = ReadingPosition(state.chapterIndex, state.pageIndex).next(book.chapters.size) {
             pagesForChapter(it).size
         }
         state = state.copy(chapterIndex = position.chapterIndex, pageIndex = position.pageIndex)
+        saveProgress()
     }
 
     fun previousPage() {
@@ -116,12 +177,14 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             pagesForChapter(it).size
         }
         state = state.copy(chapterIndex = position.chapterIndex, pageIndex = position.pageIndex)
+        saveProgress()
     }
 
     fun selectChapter(index: Int) {
         val book = state.book ?: return
         if (index in book.chapters.indices) {
             state = state.copy(chapterIndex = index, pageIndex = 0)
+            saveProgress()
         }
     }
 
@@ -134,6 +197,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             chapterIndex = position.chapterIndex,
             pageIndex = position.pageIndex.coerceIn(0, lastPageIndex)
         )
+        saveProgress()
     }
 
     fun addCurrentBookmark() {
@@ -151,8 +215,15 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         saveBookmarks()
     }
 
-    fun increaseFont() = state.let { state = it.copy(fontSize = (it.fontSize + 1f).coerceAtMost(40f), pageIndex = 0) }
-    fun decreaseFont() = state.let { state = it.copy(fontSize = (it.fontSize - 1f).coerceAtLeast(12f), pageIndex = 0) }
+    fun increaseFont() = state.let {
+        state = it.copy(fontSize = (it.fontSize + 1f).coerceAtMost(40f), pageIndex = 0)
+        saveProgress()
+    }
+
+    fun decreaseFont() = state.let {
+        state = it.copy(fontSize = (it.fontSize - 1f).coerceAtLeast(12f), pageIndex = 0)
+        saveProgress()
+    }
 
     fun updateViewport(width: Float, height: Float) {
         if (state.pageWidth != width || state.pageHeight != height) {
@@ -160,6 +231,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             val lastPageIndex = currentPages().lastIndex.coerceAtLeast(0)
             if (state.pageIndex > lastPageIndex) {
                 state = state.copy(pageIndex = lastPageIndex)
+                saveProgress()
             }
         }
     }
@@ -189,8 +261,36 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             book = demo,
             chapterIndex = 0,
             pageIndex = 0,
-            bookmarks = loadBookmarks(demo)
+            bookmarks = loadBookmarks(demo),
+            currentBookId = null,
+            section = ReaderSection.READER,
+            sessionStartedAt = System.currentTimeMillis()
         )
+    }
+
+    fun showShelf() {
+        state = state.copy(section = ReaderSection.SHELF, storedBooks = libraryStore.books())
+    }
+
+    fun showHistory() {
+        state = state.copy(section = ReaderSection.HISTORY, storedBooks = libraryStore.books())
+    }
+
+    fun toggleCurrentShelf() {
+        val id = state.currentBookId ?: return
+        val record = libraryStore.book(id) ?: return
+        libraryStore.setShelf(id, !record.inShelf)
+        state = state.copy(storedBooks = libraryStore.books())
+    }
+
+    fun removeFromShelf(id: String) {
+        libraryStore.setShelf(id, false)
+        state = state.copy(storedBooks = libraryStore.books())
+    }
+
+    fun removeFromHistory(id: String) {
+        libraryStore.removeHistory(id)
+        state = state.copy(storedBooks = libraryStore.books())
     }
 
     private fun bookmarkStorageKey(book: Book): String {
@@ -236,15 +336,36 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         return CssParser.parse(css, chapter.href)
     }
 
-    private fun copyToTempFile(context: Context, uri: Uri): File {
-        val output = File.createTempFile("myreading-", ".epub", context.cacheDir)
+    private fun copyToLibraryFile(context: Context, uri: Uri): Pair<String, File> {
+        val booksDirectory = File(context.filesDir, "books").apply { mkdirs() }
+        val temporary = File.createTempFile("import-", ".epub", booksDirectory)
+        val digest = MessageDigest.getInstance("SHA-256")
         val input = requireNotNull(context.contentResolver.openInputStream(uri)) { "Unable to open EPUB URI" }
         input.use {
-            output.outputStream().use { outputStream ->
-                it.copyTo(outputStream)
+            temporary.outputStream().use { outputStream ->
+                val buffer = ByteArray(16 * 1024)
+                while (true) {
+                    val count = it.read(buffer)
+                    if (count < 0) break
+                    digest.update(buffer, 0, count)
+                    outputStream.write(buffer, 0, count)
+                }
             }
         }
-        return output
+        val id = digest.digest().joinToString("") { byte -> "%02x".format(byte) }
+        val storedFile = File(booksDirectory, "$id.epub")
+        if (storedFile.exists()) {
+            temporary.delete()
+        } else if (!temporary.renameTo(storedFile)) {
+            temporary.copyTo(storedFile, overwrite = true)
+            temporary.delete()
+        }
+        return id to storedFile
+    }
+
+    private fun saveProgress() {
+        val id = state.currentBookId ?: return
+        libraryStore.updateProgress(id, state.chapterIndex, state.pageIndex)
     }
 
     private fun readableImportError(error: Throwable): String {
@@ -287,58 +408,141 @@ fun ReaderApp(
 
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
-            if (state.book == null) {
-                EmptyLibraryScreen(
+            when (state.section) {
+                ReaderSection.SHELF -> CollectionScreen(
+                    title = "书架",
+                    books = state.storedBooks.filter(StoredBook::inShelf),
                     loading = state.loading,
                     errorMessage = state.errorMessage,
                     onOpen = { openDocument.launch(EPUB_MIME_TYPES) },
-                    onOpenDemo = viewModel::openDemo
+                    onOpenDemo = viewModel::openDemo,
+                    onOpenBook = viewModel::openStoredBook,
+                    onRemove = { viewModel.removeFromShelf(it.id) },
+                    onShowShelf = viewModel::showShelf,
+                    onShowHistory = viewModel::showHistory
                 )
-            } else {
-                val pages = viewModel.currentPages()
-                ReaderScreen(
-                    state = state,
-                    chapterTitle = viewModel.chapterTitle(),
-                    chapterTitles = state.book.chapters.map { it.title },
-                    pageCount = pages.size,
-                    page = pages.getOrNull(state.pageIndex),
+
+                ReaderSection.HISTORY -> CollectionScreen(
+                    title = "阅读历史",
+                    books = state.storedBooks.filter(StoredBook::inHistory),
+                    loading = state.loading,
+                    errorMessage = state.errorMessage,
                     onOpen = { openDocument.launch(EPUB_MIME_TYPES) },
-                    onPreviousPage = viewModel::previousPage,
-                    onNextPage = viewModel::nextPage,
-                    onPreviousChapter = { viewModel.selectChapter((state.chapterIndex - 1).coerceAtLeast(0)) },
-                    onNextChapter = {
-                        val lastIndex = (viewModel.chapterCount() - 1).coerceAtLeast(0)
-                        viewModel.selectChapter((state.chapterIndex + 1).coerceAtMost(lastIndex))
-                    },
-                    onSelectChapter = viewModel::selectChapter,
-                    onSelectBookmark = viewModel::selectBookmark,
-                    onAddBookmark = viewModel::addCurrentBookmark,
-                    onRemoveBookmark = viewModel::removeCurrentBookmark,
-                    onFontPlus = viewModel::increaseFont,
-                    onFontMinus = viewModel::decreaseFont,
-                    onViewportChanged = viewModel::updateViewport
+                    onOpenDemo = viewModel::openDemo,
+                    onOpenBook = viewModel::openStoredBook,
+                    onRemove = { viewModel.removeFromHistory(it.id) },
+                    onShowShelf = viewModel::showShelf,
+                    onShowHistory = viewModel::showHistory
                 )
+
+                ReaderSection.READER -> {
+                    val book = state.book
+                    if (book == null) {
+                        LaunchedEffect(Unit) { viewModel.showShelf() }
+                    } else {
+                        val pages = viewModel.currentPages()
+                        val inShelf = state.storedBooks.firstOrNull { it.id == state.currentBookId }?.inShelf == true
+                        ReaderScreen(
+                            state = state,
+                            chapterTitle = viewModel.chapterTitle(),
+                            chapterTitles = book.chapters.map { it.title },
+                            pageCount = pages.size,
+                            page = pages.getOrNull(state.pageIndex),
+                            inShelf = inShelf,
+                            onToggleShelf = viewModel::toggleCurrentShelf,
+                            onShowShelf = viewModel::showShelf,
+                            onShowHistory = viewModel::showHistory,
+                            onOpen = { openDocument.launch(EPUB_MIME_TYPES) },
+                            onPreviousPage = viewModel::previousPage,
+                            onNextPage = viewModel::nextPage,
+                            onPreviousChapter = { viewModel.selectChapter((state.chapterIndex - 1).coerceAtLeast(0)) },
+                            onNextChapter = {
+                                val lastIndex = (viewModel.chapterCount() - 1).coerceAtLeast(0)
+                                viewModel.selectChapter((state.chapterIndex + 1).coerceAtMost(lastIndex))
+                            },
+                            onSelectChapter = viewModel::selectChapter,
+                            onSelectBookmark = viewModel::selectBookmark,
+                            onAddBookmark = viewModel::addCurrentBookmark,
+                            onRemoveBookmark = viewModel::removeCurrentBookmark,
+                            onFontPlus = viewModel::increaseFont,
+                            onFontMinus = viewModel::decreaseFont,
+                            onViewportChanged = viewModel::updateViewport
+                        )
+                    }
+                }
             }
         }
     }
 }
 
 @Composable
-private fun EmptyLibraryScreen(loading: Boolean, errorMessage: String?, onOpen: () -> Unit, onOpenDemo: () -> Unit) {
-    Box(
-        modifier = Modifier.fillMaxSize().background(Color(0xFFF4F0E8)),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("古籍阅读器", style = MaterialTheme.typography.headlineMedium)
-            Text("加载 EPUB3，竖排原生分页，不使用 WebView 旋转。")
-            errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            if (loading) {
-                CircularProgressIndicator()
+@OptIn(ExperimentalFoundationApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
+private fun CollectionScreen(
+    title: String,
+    books: List<StoredBook>,
+    loading: Boolean,
+    errorMessage: String?,
+    onOpen: () -> Unit,
+    onOpenDemo: () -> Unit,
+    onOpenBook: (StoredBook) -> Unit,
+    onRemove: (StoredBook) -> Unit,
+    onShowShelf: () -> Unit,
+    onShowHistory: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxSize().background(Color(0xFFF4F0E8))) {
+        TopAppBar(
+            title = { Text(title) },
+            actions = {
+                TextButton(onClick = onShowShelf) { Text("书架") }
+                TextButton(onClick = onShowHistory) { Text("阅读历史") }
+                TextButton(onClick = onOpen) { Text("导入 EPUB") }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(onClick = onOpen) { Text("打开 EPUB") }
-                OutlinedButton(onClick = onOpenDemo) { Text("加载示例") }
+        )
+        errorMessage?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 24.dp))
+        }
+        if (loading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        if (books.isEmpty() && !loading) {
+            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(if (title == "书架") "书架暂无图书" else "暂无阅读历史", style = MaterialTheme.typography.headlineSmall)
+                    Text("导入 EPUB 后会保存阅读位置，长按图书可从当前列表移除。")
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(onClick = onOpen) { Text("打开 EPUB") }
+                        OutlinedButton(onClick = onOpenDemo) { Text("加载示例") }
+                    }
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                contentPadding = PaddingValues(vertical = 20.dp)
+            ) {
+                itemsIndexed(books, key = { _, book -> book.id }) { _, book ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth().combinedClickable(
+                            onClick = { onOpenBook(book) },
+                            onLongClick = { onRemove(book) }
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(18.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(book.title.ifBlank { "未命名图书" }, style = MaterialTheme.typography.titleLarge)
+                                if (book.creator.isNotBlank()) Text(book.creator, style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "上次阅读：第 ${book.lastChapterIndex + 1} 章 · 第 ${book.lastPageIndex + 1} 页",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            Text(if (book.inShelf) "★" else "历史", style = MaterialTheme.typography.titleLarge)
+                        }
+                    }
+                }
             }
         }
     }
@@ -352,6 +556,10 @@ private fun ReaderScreen(
     chapterTitles: List<String>,
     pageCount: Int,
     page: PageLayout?,
+    inShelf: Boolean,
+    onToggleShelf: () -> Unit,
+    onShowShelf: () -> Unit,
+    onShowHistory: () -> Unit,
     onOpen: () -> Unit,
     onPreviousPage: () -> Unit,
     onNextPage: () -> Unit,
@@ -372,6 +580,19 @@ private fun ReaderScreen(
     val swipeThreshold = with(LocalDensity.current) { 72.dp.toPx() }
     val currentPosition = ReadingPosition(state.chapterIndex, state.pageIndex)
     val currentBookmarked = currentPosition in state.bookmarks
+    var clockMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+
+    LaunchedEffect(state.sessionStartedAt) {
+        while (true) {
+            clockMillis = System.currentTimeMillis()
+            delay(1_000)
+        }
+    }
+
+    val systemTime = remember(clockMillis) {
+        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(clockMillis))
+    }
+    val readingDuration = formatReadingDuration((clockMillis - state.sessionStartedAt).coerceAtLeast(0L))
 
     fun showReaderControls() {
         controlsVisible = true
@@ -429,13 +650,12 @@ private fun ReaderScreen(
                     modifier = Modifier.width(120.dp).fillMaxHeight().background(Color(0xFFF0E4D2)),
                     verticalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Column(modifier = Modifier.padding(12.dp)) {
-                        Text("章节", style = MaterialTheme.typography.titleMedium)
-                        Text("${state.chapterIndex + 1} / ${maxOf(chapterTitles.size, 1)}")
-                        Spacer(Modifier.height(8.dp))
-                        Text("页面", style = MaterialTheme.typography.titleMedium)
-                        Text(if (pageCount == 0) "0 / 0" else "${state.pageIndex + 1} / $pageCount")
-                        Spacer(Modifier.height(12.dp))
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        OutlinedButton(onClick = onShowShelf, modifier = Modifier.fillMaxWidth()) { Text("书架") }
+                        OutlinedButton(onClick = onShowHistory, modifier = Modifier.fillMaxWidth()) { Text("阅读历史") }
                         OutlinedButton(
                             onClick = { showContents = true },
                             modifier = Modifier.fillMaxWidth()
@@ -444,12 +664,19 @@ private fun ReaderScreen(
                             onClick = { showBookmarks = true },
                             modifier = Modifier.fillMaxWidth()
                         ) { Text("书签 ${state.bookmarks.size}") }
-                        Text(
-                            if (currentBookmarked) "本页已书签" else "本页未书签",
-                            style = MaterialTheme.typography.bodySmall
-                        )
                     }
-                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        TextButton(onClick = onToggleShelf, modifier = Modifier.fillMaxWidth()) {
+                            Text(if (inShelf) "★ 移出书架" else "☆ 加入书架")
+                        }
+                        Text(
+                            "章节 ${state.chapterIndex + 1} / ${maxOf(chapterTitles.size, 1)}",
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                        Text(
+                            if (pageCount == 0) "页面 0 / 0" else "页面 ${state.pageIndex + 1} / $pageCount",
+                            style = MaterialTheme.typography.labelSmall
+                        )
                         OutlinedButton(onClick = onPreviousChapter, modifier = Modifier.fillMaxWidth()) { Text("上一章") }
                         OutlinedButton(onClick = onNextChapter, modifier = Modifier.fillMaxWidth()) { Text("下一章") }
                     }
@@ -492,17 +719,20 @@ private fun ReaderScreen(
                         }
                     }
             ) {
-                val density = LocalDensity.current
-                LaunchedEffect(maxWidth, maxHeight) {
-                    with(density) {
-                        onViewportChanged(maxWidth.toPx(), maxHeight.toPx())
+                BoxWithConstraints(modifier = Modifier.fillMaxSize().padding(end = 44.dp)) {
+                    val density = LocalDensity.current
+                    LaunchedEffect(maxWidth, maxHeight) {
+                        with(density) {
+                            onViewportChanged(maxWidth.toPx(), maxHeight.toPx())
+                        }
+                    }
+                    if (page == null) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("没有可显示页面") }
+                    } else {
+                        VerticalPageCanvas(page = page, modifier = Modifier.fillMaxSize())
                     }
                 }
-                if (page == null) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("没有可显示页面") }
-                } else {
-                    VerticalPageCanvas(page = page, modifier = Modifier.fillMaxSize())
-                }
+                if (currentBookmarked) BookmarkRibbon(modifier = Modifier.align(Alignment.TopEnd).padding(end = 9.dp))
             }
         }
         Box(
@@ -515,7 +745,11 @@ private fun ReaderScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(if (currentBookmarked) "本页已书签 · 上拉取消" else "下拉添加书签 · 点击中间显示控件")
+                        Column {
+                            Text("系统时间 $systemTime", style = MaterialTheme.typography.labelLarge)
+                            Text("本次阅读 $readingDuration", style = MaterialTheme.typography.labelMedium)
+                        }
+                        Text("下拉添加书签 · 上拉取消", style = MaterialTheme.typography.bodySmall)
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             OutlinedButton(onClick = onPreviousPage) { Text("上一页") }
                             OutlinedButton(onClick = onNextPage) { Text("下一页") }
@@ -524,6 +758,30 @@ private fun ReaderScreen(
                 }
             }
         }
+    }
+}
+
+private fun formatReadingDuration(durationMillis: Long): String {
+    val totalSeconds = durationMillis / 1_000
+    val hours = totalSeconds / 3_600
+    val minutes = (totalSeconds % 3_600) / 60
+    val seconds = totalSeconds % 60
+    return if (hours > 0) "%02d:%02d:%02d".format(hours, minutes, seconds)
+    else "%02d:%02d".format(minutes, seconds)
+}
+
+@Composable
+private fun BookmarkRibbon(modifier: Modifier = Modifier) {
+    Canvas(modifier = modifier.width(24.dp).height(64.dp)) {
+        val ribbon = Path().apply {
+            moveTo(0f, 0f)
+            lineTo(size.width, 0f)
+            lineTo(size.width, size.height)
+            lineTo(size.width / 2f, size.height * 0.78f)
+            lineTo(0f, size.height)
+            close()
+        }
+        drawPath(ribbon, Color(0xFFB3261E))
     }
 }
 

@@ -93,6 +93,42 @@ flowchart LR
 **Affected Modules** – `ReaderApp`, `ReaderViewModel`, `ReadingNavigation`, and
 `VerticalLayoutEngine`.
 
+## Shelf, history, and reading status
+
+**Feature** – The reader sidebar links to a shelf and reading-history screen. Books
+open at their last saved chapter and page, and a long press removes a book from the
+current list without affecting the other list. A star toggles shelf membership. The
+sidebar footer uses compact chapter/page progress, while the fixed bottom area shows
+the system time and current reading-session duration. The reading page reserves a
+right gutter and displays a red ribbon there only when the current page is
+bookmarked.
+
+**Design** – Imported EPUB files are copied to app-private storage under a stable
+SHA-256 identity so document-provider permissions are not required after a restart.
+Shelf and history membership are persisted as independent flags alongside the last
+reading position. The stored EPUB is deleted only after both flags are cleared. The
+right gutter belongs to the page layout rather than overlaying text, keeping the
+bookmark ribbon separate from vertical content.
+
+**Call Flow**
+
+```mermaid
+flowchart LR
+    Import[Import EPUB] --> PrivateCopy[App-private EPUB copy]
+    PrivateCopy --> Record[Persist book record]
+    Read[Turn page or chapter] --> Position[Save reading position]
+    Shelf[Shelf] --> Open[Open stored book]
+    History[Reading history] --> Open
+    Open --> Resume[Restore chapter and page]
+    LongPress[Long press book] --> Remove[Clear current-list flag]
+    Remove --> Retain{Still on other list?}
+    Retain -- Yes --> Keep[Keep record and EPUB]
+    Retain -- No --> Delete[Delete record and EPUB]
+    Bookmark[Bookmark current page] --> Ribbon[Show red gutter ribbon]
+```
+
+**Affected Modules** – `LibraryStore`, `ReaderViewModel`, and `ReaderApp`.
+
 ## Build
 
 Use JDK 17 and the included Gradle wrapper:
