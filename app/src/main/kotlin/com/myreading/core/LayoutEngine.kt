@@ -261,21 +261,42 @@ class VerticalLayoutEngine(
                         "audio" -> Unit
 
                         else -> {
-                            val blockElement = isBlockElement(element)
-                            val fontSize = nextState.resolvedFontSize(settings)
-                            if (blockElement && usedHeight > 0f) {
-                                usedHeight += fontSize * settings.lineHeight * 0.5f
-                                if (usedHeight > usableHeight) {
-                                    newColumnOrPage()
+                            when {
+                                isHeadingElement(element) -> {
+                                    if (currentFragments.isNotEmpty() || usedHeight > 0f) newColumnOrPage()
+                                    val scale = if (localName == "h1") 1.6f else 1.4f
+                                    val headingState = nextState.copy(
+                                        fontSize = max(nextState.resolvedFontSize(settings), settings.fontSize * scale)
+                                    )
+                                    for (child in XmlSupport.children(element)) {
+                                        walk(child, headingState)
+                                    }
+                                    if (currentFragments.isNotEmpty()) newColumnOrPage()
                                 }
-                            }
-                            for (child in XmlSupport.children(element)) {
-                                walk(child, nextState)
-                            }
-                            if (blockElement && usedHeight > 0f) {
-                                usedHeight += fontSize * settings.lineHeight * 0.35f
-                                if (usedHeight > usableHeight) {
-                                    newColumnOrPage()
+
+                                isParagraphElement(element) -> {
+                                    if (currentFragments.isNotEmpty() || usedHeight > 0f) newColumnOrPage()
+                                    val fontSize = nextState.resolvedFontSize(settings)
+                                    usedHeight = (fontSize * settings.lineHeight * 2f).coerceAtMost(usableHeight * 0.3f)
+                                    for (child in XmlSupport.children(element)) {
+                                        walk(child, nextState)
+                                    }
+                                }
+
+                                else -> {
+                                    val blockElement = isBlockElement(element)
+                                    val fontSize = nextState.resolvedFontSize(settings)
+                                    if (blockElement && usedHeight > 0f) {
+                                        usedHeight += fontSize * settings.lineHeight * 0.5f
+                                        if (usedHeight > usableHeight) newColumnOrPage()
+                                    }
+                                    for (child in XmlSupport.children(element)) {
+                                        walk(child, nextState)
+                                    }
+                                    if (blockElement && usedHeight > 0f) {
+                                        usedHeight += fontSize * settings.lineHeight * 0.35f
+                                        if (usedHeight > usableHeight) newColumnOrPage()
+                                    }
                                 }
                             }
                         }
@@ -285,6 +306,29 @@ class VerticalLayoutEngine(
         }
 
         val rootState = resolveStyle(body, stylesheet, InlineStyleState(), settings)
+        val hasBodyHeading = (1..6).any { body.getElementsByTagNameNS("*", "h$it").length > 0 }
+        if (!hasBodyHeading && chapter.title.isNotBlank()) {
+            val titleState = rootState.copy(fontSize = settings.fontSize * 1.6f)
+            val titleTokens = VerticalTypography.tokenize(chapter.title, titleState)
+            titleTokens.forEachIndexed { index, token ->
+                append(
+                    LayoutFragment.Text(
+                        unitId = "chapter-title-$index",
+                        sourceText = token.source,
+                        displayText = token.display,
+                        x = 0f,
+                        y = 0f,
+                        fontSize = titleState.resolvedFontSize(settings),
+                        lineHeight = settings.lineHeight,
+                        combineUpright = token.combineUpright,
+                        punctuation = token.punctuation,
+                        textOrientationUpright = token.textOrientationUpright
+                    ),
+                    token.advance(settings, titleState.resolvedFontSize(settings))
+                )
+            }
+            if (currentFragments.isNotEmpty()) newColumnOrPage()
+        }
         for (child in XmlSupport.children(body)) {
             walk(child, rootState)
         }
@@ -324,6 +368,14 @@ class VerticalLayoutEngine(
             "li", "ul", "ol", "table", "tr", "td", "th",
             "h1", "h2", "h3", "h4", "h5", "h6"
         )
+    }
+
+    private fun isHeadingElement(element: Element): Boolean {
+        return XmlSupport.localName(element).lowercase() in setOf("h1", "h2", "h3", "h4", "h5", "h6")
+    }
+
+    private fun isParagraphElement(element: Element): Boolean {
+        return XmlSupport.localName(element).lowercase() in setOf("p", "li", "blockquote")
     }
 
     private fun normalizeWhitespace(value: String?): String {

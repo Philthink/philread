@@ -62,6 +62,37 @@ flowchart LR
 
 **Affected Modules** – `ReaderApp`, `ReaderViewModel`, and `ReadingNavigation`.
 
+## Contents, bookmarks, and book typography
+
+**Feature** – The sidebar opens a complete chapter list and a persistent bookmark
+list. Selecting a chapter opens its first page; selecting a bookmark restores its
+chapter and page. A downward swipe over the page adds a bookmark and an upward swipe
+removes it. Chapter headings use a larger independent vertical column, while each
+paragraph starts in a new column with a two-character first-line indent. Tapping the
+middle third of the page reveals both controls; they auto-hide after ten seconds.
+
+**Design** – Bookmarks are stored per EPUB identity as chapter/page positions in
+Android `SharedPreferences`. The bottom control area always reserves 80dp even when
+hidden, preventing page height and pagination from changing as controls appear. The
+sidebar may release horizontal space, so viewport changes repaginate and clamp the
+active page.
+
+**Call Flow**
+
+```mermaid
+flowchart LR
+    Toc[Contents dialog] --> Chapter[Chapter first page]
+    SwipeDown[Swipe down] --> Add[Persist current bookmark]
+    SwipeUp[Swipe up] --> Remove[Remove current bookmark]
+    Bookmark[Bookmark dialog] --> Position[Restore chapter and page]
+    Center[Tap page center] --> Controls[Show sidebar and bottom controls]
+    Controls --> Timer[Auto-hide after 10 seconds]
+    Timer --> Reserved[Keep fixed bottom whitespace]
+```
+
+**Affected Modules** – `ReaderApp`, `ReaderViewModel`, `ReadingNavigation`, and
+`VerticalLayoutEngine`.
+
 ## Build
 
 Use JDK 17 and the included Gradle wrapper:

@@ -111,17 +111,62 @@ class LayoutEngineTest {
         assertEquals(listOf("︐", "︒", "︕", "︖"), mapped)
     }
 
+    @Test
+    fun paragraphsStartInSeparateIndentedColumns() {
+        val pages = layoutPages(
+            """
+            <html xmlns="http://www.w3.org/1999/xhtml">
+              <body style="writing-mode: vertical-rl;">
+                <p>甲乙</p><p>丙丁</p>
+              </body>
+            </html>
+            """.trimIndent(),
+            title = ""
+        )
+        val fragments = pages.flatMap { it.columns }.flatMap { it.fragments }
+            .filterIsInstance<LayoutFragment.Text>()
+        val firstParagraph = fragments.first { it.sourceText == "甲" }
+        val secondParagraph = fragments.first { it.sourceText == "丙" }
+
+        assertTrue(firstParagraph.x > secondParagraph.x)
+        assertTrue(firstParagraph.y >= settings.marginTop + settings.fontSize * settings.lineHeight * 2f)
+        assertTrue(secondParagraph.y >= settings.marginTop + settings.fontSize * settings.lineHeight * 2f)
+    }
+
+    @Test
+    fun chapterTitleUsesLargerIndependentColumn() {
+        val pages = layoutPages(
+            """
+            <html xmlns="http://www.w3.org/1999/xhtml">
+              <body style="writing-mode: vertical-rl;"><p>正文</p></body>
+            </html>
+            """.trimIndent(),
+            title = "卷一"
+        )
+        val fragments = pages.flatMap { it.columns }.flatMap { it.fragments }
+            .filterIsInstance<LayoutFragment.Text>()
+        val title = fragments.first { it.unitId.startsWith("chapter-title") }
+        val body = fragments.first { it.sourceText == "正" }
+
+        assertTrue(title.fontSize > body.fontSize)
+        assertTrue(title.x > body.x)
+    }
+
     private fun layoutFragments(html: String): List<LayoutFragment> {
+        return layoutPages(html).flatMap { it.columns }.flatMap { it.fragments }
+    }
+
+    private fun layoutPages(html: String, title: String = ""): List<PageLayout> {
         val chapter = Chapter(
             id = "chap",
             href = "chapter.xhtml",
-            title = "chapter",
+            title = title,
             order = 0,
             linear = true,
             content = html.encodeToByteArray(),
             referencedResourceHrefs = emptySet()
         )
-        return engine.layoutChapter(chapter, stylesheet, settings).flatMap { it.columns }.flatMap { it.fragments }
+        return engine.layoutChapter(chapter, stylesheet, settings)
     }
 
     private fun layoutRubyFragment(html: String): LayoutFragment.Ruby {

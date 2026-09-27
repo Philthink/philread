@@ -8,21 +8,23 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -33,6 +35,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.abs
 
 data class ReaderUiState(
     val loading: Boolean = false,
@@ -44,7 +47,8 @@ data class ReaderUiState(
     val lineHeight: Float = 1.25f,
     val columnGap: Float = 18f,
     val pageWidth: Float = 360f,
-    val pageHeight: Float = 640f
+    val pageHeight: Float = 640f,
+    val bookmarks: Set<ReadingPosition> = emptySet()
 ) {
     val layoutSettings: LayoutSettings
         get() = LayoutSettings(
@@ -86,7 +90,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
                         errorMessage = null,
                         book = book,
                         chapterIndex = initialChapterIndex,
-                        pageIndex = 0
+                        pageIndex = 0,
+                        bookmarks = loadBookmarks(book)
                     )
                 }
             } catch (error: Throwable) {
@@ -118,6 +123,32 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
         if (index in book.chapters.indices) {
             state = state.copy(chapterIndex = index, pageIndex = 0)
         }
+    }
+
+    fun selectBookmark(position: ReadingPosition) {
+        val book = state.book ?: return
+        if (position.chapterIndex !in book.chapters.indices) return
+        val lastPageIndex = pagesForChapter(position.chapterIndex).lastIndex
+        if (lastPageIndex < 0) return
+        state = state.copy(
+            chapterIndex = position.chapterIndex,
+            pageIndex = position.pageIndex.coerceIn(0, lastPageIndex)
+        )
+    }
+
+    fun addCurrentBookmark() {
+        if (currentPages().isEmpty()) return
+        val bookmark = ReadingPosition(state.chapterIndex, state.pageIndex)
+        if (bookmark in state.bookmarks) return
+        state = state.copy(bookmarks = state.bookmarks + bookmark)
+        saveBookmarks()
+    }
+
+    fun removeCurrentBookmark() {
+        val bookmark = ReadingPosition(state.chapterIndex, state.pageIndex)
+        if (bookmark !in state.bookmarks) return
+        state = state.copy(bookmarks = state.bookmarks - bookmark)
+        saveBookmarks()
     }
 
     fun increaseFont() = state.let { state = it.copy(fontSize = (it.fontSize + 1f).coerceAtMost(40f), pageIndex = 0) }
@@ -152,7 +183,48 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
 
     fun openDemo() {
         val demo = DemoBookFactory.sampleBook()
-        state = state.copy(loading = false, errorMessage = null, book = demo, chapterIndex = 0, pageIndex = 0)
+        state = state.copy(
+            loading = false,
+            errorMessage = null,
+            book = demo,
+            chapterIndex = 0,
+            pageIndex = 0,
+            bookmarks = loadBookmarks(demo)
+        )
+    }
+
+    private fun bookmarkStorageKey(book: Book): String {
+        val identity = listOfNotNull(
+            book.metadata.identifier,
+            book.metadata.title,
+            book.metadata.creator
+        ).joinToString("|").ifBlank { book.sourcePath }
+        return "bookmarks-${identity.hashCode().toUInt().toString(16)}"
+    }
+
+    private fun loadBookmarks(book: Book): Set<ReadingPosition> {
+        val serialized = getApplication<Application>()
+            .getSharedPreferences("reader-bookmarks", Context.MODE_PRIVATE)
+            .getString(bookmarkStorageKey(book), "")
+            .orEmpty()
+        return serialized.split(';').mapNotNull { entry ->
+            val parts = entry.split(':')
+            val chapterIndex = parts.getOrNull(0)?.toIntOrNull() ?: return@mapNotNull null
+            val pageIndex = parts.getOrNull(1)?.toIntOrNull() ?: return@mapNotNull null
+            ReadingPosition(chapterIndex, pageIndex)
+        }.filter { it.chapterIndex in book.chapters.indices && it.pageIndex >= 0 }.toSet()
+    }
+
+    private fun saveBookmarks() {
+        val book = state.book ?: return
+        val serialized = state.bookmarks
+            .sortedWith(compareBy(ReadingPosition::chapterIndex, ReadingPosition::pageIndex))
+            .joinToString(";") { "${it.chapterIndex}:${it.pageIndex}" }
+        getApplication<Application>()
+            .getSharedPreferences("reader-bookmarks", Context.MODE_PRIVATE)
+            .edit()
+            .putString(bookmarkStorageKey(book), serialized)
+            .apply()
     }
 
     private fun extractStylesheet(book: Book, chapter: Chapter): Stylesheet {
@@ -227,7 +299,7 @@ fun ReaderApp(
                 ReaderScreen(
                     state = state,
                     chapterTitle = viewModel.chapterTitle(),
-                    chapterCount = viewModel.chapterCount(),
+                    chapterTitles = state.book.chapters.map { it.title },
                     pageCount = pages.size,
                     page = pages.getOrNull(state.pageIndex),
                     onOpen = { openDocument.launch(EPUB_MIME_TYPES) },
@@ -238,6 +310,10 @@ fun ReaderApp(
                         val lastIndex = (viewModel.chapterCount() - 1).coerceAtLeast(0)
                         viewModel.selectChapter((state.chapterIndex + 1).coerceAtMost(lastIndex))
                     },
+                    onSelectChapter = viewModel::selectChapter,
+                    onSelectBookmark = viewModel::selectBookmark,
+                    onAddBookmark = viewModel::addCurrentBookmark,
+                    onRemoveBookmark = viewModel::removeCurrentBookmark,
                     onFontPlus = viewModel::increaseFont,
                     onFontMinus = viewModel::decreaseFont,
                     onViewportChanged = viewModel::updateViewport
@@ -273,7 +349,7 @@ private fun EmptyLibraryScreen(loading: Boolean, errorMessage: String?, onOpen: 
 private fun ReaderScreen(
     state: ReaderUiState,
     chapterTitle: String,
-    chapterCount: Int,
+    chapterTitles: List<String>,
     pageCount: Int,
     page: PageLayout?,
     onOpen: () -> Unit,
@@ -281,25 +357,66 @@ private fun ReaderScreen(
     onNextPage: () -> Unit,
     onPreviousChapter: () -> Unit,
     onNextChapter: () -> Unit,
+    onSelectChapter: (Int) -> Unit,
+    onSelectBookmark: (ReadingPosition) -> Unit,
+    onAddBookmark: () -> Unit,
+    onRemoveBookmark: () -> Unit,
     onFontPlus: () -> Unit,
     onFontMinus: () -> Unit,
     onViewportChanged: (Float, Float) -> Unit
 ) {
-    var sidebarVisible by rememberSaveable { mutableStateOf(true) }
+    var controlsVisible by rememberSaveable { mutableStateOf(true) }
+    var controlsActivity by remember { mutableIntStateOf(0) }
+    var showContents by remember { mutableStateOf(false) }
+    var showBookmarks by remember { mutableStateOf(false) }
+    val swipeThreshold = with(LocalDensity.current) { 72.dp.toPx() }
+    val currentPosition = ReadingPosition(state.chapterIndex, state.pageIndex)
+    val currentBookmarked = currentPosition in state.bookmarks
 
-    LaunchedEffect(sidebarVisible, state.chapterIndex, state.pageIndex) {
-        if (sidebarVisible) {
+    fun showReaderControls() {
+        controlsVisible = true
+        controlsActivity += 1
+    }
+
+    LaunchedEffect(controlsVisible, controlsActivity, state.chapterIndex, state.pageIndex) {
+        if (controlsVisible) {
             delay(10_000)
-            sidebarVisible = false
+            controlsVisible = false
         }
+    }
+
+    if (showContents) {
+        ContentsDialog(
+            chapterTitles = chapterTitles,
+            currentChapterIndex = state.chapterIndex,
+            onSelect = { index ->
+                onSelectChapter(index)
+                showContents = false
+            },
+            onDismiss = { showContents = false }
+        )
+    }
+
+    if (showBookmarks) {
+        BookmarksDialog(
+            bookmarks = state.bookmarks,
+            chapterTitles = chapterTitles,
+            onSelect = { bookmark ->
+                onSelectBookmark(bookmark)
+                showBookmarks = false
+            },
+            onDismiss = { showBookmarks = false }
+        )
     }
 
     Column(modifier = Modifier.fillMaxSize().background(Color(0xFFF8F3EA))) {
         TopAppBar(
             title = { Text(chapterTitle) },
             actions = {
-                TextButton(onClick = { sidebarVisible = !sidebarVisible }) {
-                    Text(if (sidebarVisible) "隐藏信息" else "显示信息")
+                TextButton(onClick = {
+                    if (controlsVisible) controlsVisible = false else showReaderControls()
+                }) {
+                    Text(if (controlsVisible) "隐藏控件" else "显示控件")
                 }
                 TextButton(onClick = onOpen) { Text("打开") }
                 TextButton(onClick = onFontMinus) { Text("A-") }
@@ -307,17 +424,30 @@ private fun ReaderScreen(
             }
         )
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            if (sidebarVisible) {
+            if (controlsVisible) {
                 Column(
                     modifier = Modifier.width(120.dp).fillMaxHeight().background(Color(0xFFF0E4D2)),
                     verticalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
                         Text("章节", style = MaterialTheme.typography.titleMedium)
-                        Text("${state.chapterIndex + 1} / ${maxOf(chapterCount, 1)}")
+                        Text("${state.chapterIndex + 1} / ${maxOf(chapterTitles.size, 1)}")
                         Spacer(Modifier.height(8.dp))
                         Text("页面", style = MaterialTheme.typography.titleMedium)
                         Text(if (pageCount == 0) "0 / 0" else "${state.pageIndex + 1} / $pageCount")
+                        Spacer(Modifier.height(12.dp))
+                        OutlinedButton(
+                            onClick = { showContents = true },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("目录") }
+                        OutlinedButton(
+                            onClick = { showBookmarks = true },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("书签 ${state.bookmarks.size}") }
+                        Text(
+                            if (currentBookmarked) "本页已书签" else "本页未书签",
+                            style = MaterialTheme.typography.bodySmall
+                        )
                     }
                     Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = onPreviousChapter, modifier = Modifier.fillMaxWidth()) { Text("上一章") }
@@ -328,10 +458,38 @@ private fun ReaderScreen(
             BoxWithConstraints(
                 modifier = Modifier.weight(1f).fillMaxHeight().padding(16.dp)
                     .background(Color.White)
-                    .pointerInput(Unit) {
-                        detectTapGestures(
-                            onTap = { offset -> if (offset.x < size.width / 2f) onPreviousPage() else onNextPage() }
-                        )
+                    .pointerInput(state.chapterIndex, state.pageIndex) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            var deltaX = 0f
+                            var deltaY = 0f
+                            var pressed = true
+                            while (pressed) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                deltaX += change.position.x - change.previousPosition.x
+                                deltaY += change.position.y - change.previousPosition.y
+                                if (abs(deltaX) > viewConfiguration.touchSlop || abs(deltaY) > viewConfiguration.touchSlop) {
+                                    change.consume()
+                                }
+                                pressed = change.pressed
+                            }
+
+                            when {
+                                abs(deltaY) >= swipeThreshold && abs(deltaY) > abs(deltaX) -> {
+                                    if (deltaY > 0f) onAddBookmark() else onRemoveBookmark()
+                                    showReaderControls()
+                                }
+                                abs(deltaX) <= viewConfiguration.touchSlop && abs(deltaY) <= viewConfiguration.touchSlop -> {
+                                    val offset = down.position
+                                    when {
+                                        offset.x < size.width / 3f -> onPreviousPage()
+                                        offset.x > size.width * 2f / 3f -> onNextPage()
+                                        else -> showReaderControls()
+                                    }
+                                }
+                            }
+                        }
                     }
             ) {
                 val density = LocalDensity.current
@@ -347,20 +505,87 @@ private fun ReaderScreen(
                 }
             }
         }
-        BottomAppBar {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("点击左右半区翻页")
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    OutlinedButton(onClick = onPreviousPage) { Text("上一页") }
-                    OutlinedButton(onClick = onNextPage) { Text("下一页") }
+        Box(
+            modifier = Modifier.fillMaxWidth().height(80.dp).background(Color(0xFFF8F3EA))
+        ) {
+            if (controlsVisible) {
+                BottomAppBar(modifier = Modifier.fillMaxSize()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(if (currentBookmarked) "本页已书签 · 上拉取消" else "下拉添加书签 · 点击中间显示控件")
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            OutlinedButton(onClick = onPreviousPage) { Text("上一页") }
+                            OutlinedButton(onClick = onNextPage) { Text("下一页") }
+                        }
+                    }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun ContentsDialog(
+    chapterTitles: List<String>,
+    currentChapterIndex: Int,
+    onSelect: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("目录") },
+        text = {
+            LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp)) {
+                itemsIndexed(chapterTitles) { index, title ->
+                    TextButton(onClick = { onSelect(index) }, modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "${index + 1}. ${title.ifBlank { "未命名章节" }}",
+                            color = if (index == currentChapterIndex) MaterialTheme.colorScheme.primary else Color.Unspecified,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
+    )
+}
+
+@Composable
+private fun BookmarksDialog(
+    bookmarks: Set<ReadingPosition>,
+    chapterTitles: List<String>,
+    onSelect: (ReadingPosition) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val orderedBookmarks = remember(bookmarks) {
+        bookmarks.sortedWith(compareBy(ReadingPosition::chapterIndex, ReadingPosition::pageIndex))
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("书签") },
+        text = {
+            if (orderedBookmarks.isEmpty()) {
+                Text("暂无书签。在正文中下拉可添加当前页书签。")
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp)) {
+                    itemsIndexed(orderedBookmarks) { _, bookmark ->
+                        val chapterTitle = chapterTitles.getOrNull(bookmark.chapterIndex).orEmpty()
+                        TextButton(onClick = { onSelect(bookmark) }, modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                "${bookmark.chapterIndex + 1}. ${chapterTitle.ifBlank { "未命名章节" }} · 第 ${bookmark.pageIndex + 1} 页",
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
+    )
 }
 
 @OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
