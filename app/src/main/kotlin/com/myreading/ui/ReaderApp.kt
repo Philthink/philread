@@ -22,12 +22,14 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.myreading.core.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -96,12 +98,19 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun nextPage() {
-        val pages = currentPages()
-        if (state.pageIndex + 1 < pages.size) state = state.copy(pageIndex = state.pageIndex + 1)
+        val book = state.book ?: return
+        val position = ReadingPosition(state.chapterIndex, state.pageIndex).next(book.chapters.size) {
+            pagesForChapter(it).size
+        }
+        state = state.copy(chapterIndex = position.chapterIndex, pageIndex = position.pageIndex)
     }
 
     fun previousPage() {
-        if (state.pageIndex > 0) state = state.copy(pageIndex = state.pageIndex - 1)
+        if (state.book == null) return
+        val position = ReadingPosition(state.chapterIndex, state.pageIndex).previous {
+            pagesForChapter(it).size
+        }
+        state = state.copy(chapterIndex = position.chapterIndex, pageIndex = position.pageIndex)
     }
 
     fun selectChapter(index: Int) {
@@ -117,12 +126,20 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     fun updateViewport(width: Float, height: Float) {
         if (state.pageWidth != width || state.pageHeight != height) {
             state = state.copy(pageWidth = width, pageHeight = height)
+            val lastPageIndex = currentPages().lastIndex.coerceAtLeast(0)
+            if (state.pageIndex > lastPageIndex) {
+                state = state.copy(pageIndex = lastPageIndex)
+            }
         }
     }
 
     fun currentPages(): List<PageLayout> {
+        return pagesForChapter(state.chapterIndex)
+    }
+
+    private fun pagesForChapter(chapterIndex: Int): List<PageLayout> {
         val book = state.book ?: return emptyList()
-        val chapter = book.chapters.getOrNull(state.chapterIndex) ?: return emptyList()
+        val chapter = book.chapters.getOrNull(chapterIndex) ?: return emptyList()
         val stylesheet = extractStylesheet(book, chapter)
         return layoutEngine.paginate(chapter, stylesheet, state.layoutSettings).pages
     }
@@ -206,11 +223,13 @@ fun ReaderApp(
                     onOpenDemo = viewModel::openDemo
                 )
             } else {
+                val pages = viewModel.currentPages()
                 ReaderScreen(
                     state = state,
                     chapterTitle = viewModel.chapterTitle(),
                     chapterCount = viewModel.chapterCount(),
-                    page = viewModel.currentPage(),
+                    pageCount = pages.size,
+                    page = pages.getOrNull(state.pageIndex),
                     onOpen = { openDocument.launch(EPUB_MIME_TYPES) },
                     onPreviousPage = viewModel::previousPage,
                     onNextPage = viewModel::nextPage,
@@ -255,6 +274,7 @@ private fun ReaderScreen(
     state: ReaderUiState,
     chapterTitle: String,
     chapterCount: Int,
+    pageCount: Int,
     page: PageLayout?,
     onOpen: () -> Unit,
     onPreviousPage: () -> Unit,
@@ -265,30 +285,44 @@ private fun ReaderScreen(
     onFontMinus: () -> Unit,
     onViewportChanged: (Float, Float) -> Unit
 ) {
+    var sidebarVisible by rememberSaveable { mutableStateOf(true) }
+
+    LaunchedEffect(sidebarVisible, state.chapterIndex, state.pageIndex) {
+        if (sidebarVisible) {
+            delay(10_000)
+            sidebarVisible = false
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize().background(Color(0xFFF8F3EA))) {
         TopAppBar(
             title = { Text(chapterTitle) },
             actions = {
+                TextButton(onClick = { sidebarVisible = !sidebarVisible }) {
+                    Text(if (sidebarVisible) "隐藏信息" else "显示信息")
+                }
                 TextButton(onClick = onOpen) { Text("打开") }
                 TextButton(onClick = onFontMinus) { Text("A-") }
                 TextButton(onClick = onFontPlus) { Text("A+") }
             }
         )
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            Column(
-                modifier = Modifier.width(120.dp).fillMaxHeight().background(Color(0xFFF0E4D2)),
-                verticalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text("章节", style = MaterialTheme.typography.titleMedium)
-                    Text("${state.chapterIndex + 1} / ${maxOf(chapterCount, 1)}")
-                    Spacer(Modifier.height(8.dp))
-                    Text("页面", style = MaterialTheme.typography.titleMedium)
-                    Text("${state.pageIndex + 1}")
-                }
-                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onPreviousChapter, modifier = Modifier.fillMaxWidth()) { Text("上一章") }
-                    OutlinedButton(onClick = onNextChapter, modifier = Modifier.fillMaxWidth()) { Text("下一章") }
+            if (sidebarVisible) {
+                Column(
+                    modifier = Modifier.width(120.dp).fillMaxHeight().background(Color(0xFFF0E4D2)),
+                    verticalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("章节", style = MaterialTheme.typography.titleMedium)
+                        Text("${state.chapterIndex + 1} / ${maxOf(chapterCount, 1)}")
+                        Spacer(Modifier.height(8.dp))
+                        Text("页面", style = MaterialTheme.typography.titleMedium)
+                        Text(if (pageCount == 0) "0 / 0" else "${state.pageIndex + 1} / $pageCount")
+                    }
+                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = onPreviousChapter, modifier = Modifier.fillMaxWidth()) { Text("上一章") }
+                        OutlinedButton(onClick = onNextChapter, modifier = Modifier.fillMaxWidth()) { Text("下一章") }
+                    }
                 }
             }
             BoxWithConstraints(

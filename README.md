@@ -36,6 +36,32 @@ flowchart LR
 **Affected Modules** – `MainActivity`, `ReaderViewModel`, `ReadingNavigation`,
 `EpubParser`, `XmlSupport`, and `VerticalLayoutEngine`.
 
+## Reader navigation
+
+**Feature** – The chapter information sidebar can be hidden manually and closes
+automatically after ten seconds. When hidden, the reading canvas uses the released
+width and repaginates. Page progress is shown as `current / total`, and page turns
+cross chapter boundaries in both directions.
+
+**Design** – Cross-chapter movement is represented by a testable `ReadingPosition`.
+It skips chapters that produce no layout pages and lands on either the first page of
+the next chapter or the final page of the previous chapter. Viewport changes clamp
+the page index after repagination so hiding the sidebar cannot leave a blank page.
+
+**Call Flow**
+
+```mermaid
+flowchart LR
+    Turn[Previous or next page] --> Position[ReadingPosition]
+    Position --> Boundary{Chapter boundary?}
+    Boundary -- No --> Page[Adjacent page]
+    Boundary -- Yes --> Chapter[Adjacent non-empty chapter]
+    Sidebar[Hide sidebar] --> Viewport[Expanded viewport]
+    Viewport --> Repaginate[Repaginate and clamp page]
+```
+
+**Affected Modules** – `ReaderApp`, `ReaderViewModel`, and `ReadingNavigation`.
+
 ## Build
 
 Use JDK 17 and the included Gradle wrapper:
