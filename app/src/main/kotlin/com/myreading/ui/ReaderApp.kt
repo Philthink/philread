@@ -3,8 +3,18 @@ package com.myreading.ui
 import android.app.Application
 import android.content.Context
 import android.content.Intent
+import android.graphics.RenderEffect
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.net.Uri
+import android.os.Build
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
@@ -15,6 +25,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -27,10 +38,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.asComposeRenderEffect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.AndroidViewModel
@@ -61,6 +75,7 @@ data class ReaderUiState(
     val book: Book? = null,
     val chapterIndex: Int = 0,
     val pageIndex: Int = 0,
+    val orientation: ReadingOrientation = ReadingOrientation.VERTICAL,
     val fontChoice: ReaderFontChoice = ReaderFontChoice.SYSTEM,
     val fontSize: Float = 20f,
     val lineHeight: Float = 1.25f,
@@ -78,6 +93,7 @@ data class ReaderUiState(
     val layoutSettings: LayoutSettings
         get() = LayoutSettings(
             fontFamily = fontChoice.layoutFamily,
+            orientation = orientation,
             fontSize = fontSize,
             lineHeight = lineHeight,
             columnGap = columnGap,
@@ -98,7 +114,8 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
             storedBooks = libraryStore.books(),
             fontChoice = initialPreferences.fontChoice,
             themeMode = initialPreferences.themeMode,
-            restReminderMinutes = initialPreferences.restReminderMinutes
+            restReminderMinutes = initialPreferences.restReminderMinutes,
+            orientation = initialPreferences.orientation
         )
     )
         private set
@@ -258,6 +275,17 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     fun setRestReminder(minutes: Int) {
         preferencesStore.setRestReminder(minutes)
         state = state.copy(restReminderMinutes = minutes)
+    }
+
+    fun toggleOrientation() {
+        val next = if (state.orientation == ReadingOrientation.VERTICAL) {
+            ReadingOrientation.HORIZONTAL
+        } else {
+            ReadingOrientation.VERTICAL
+        }
+        preferencesStore.setOrientation(next)
+        state = state.copy(orientation = next, pageIndex = 0)
+        saveProgress()
     }
 
     fun updateViewport(width: Float, height: Float) {
@@ -490,6 +518,7 @@ fun ReaderApp(
                             page = pages.getOrNull(state.pageIndex),
                             inShelf = inShelf,
                             darkTheme = darkTheme,
+                            orientation = state.orientation,
                             onToggleShelf = viewModel::toggleCurrentShelf,
                             onShowShelf = viewModel::showShelf,
                             onShowHistory = viewModel::showHistory,
@@ -510,6 +539,7 @@ fun ReaderApp(
                             onFontChoice = viewModel::setFontChoice,
                             onThemeMode = viewModel::setThemeMode,
                             onRestReminder = viewModel::setRestReminder,
+                            onToggleOrientation = viewModel::toggleOrientation,
                             onViewportChanged = viewModel::updateViewport
                         )
                     }
@@ -602,6 +632,7 @@ private fun ReaderScreen(
     page: PageLayout?,
     inShelf: Boolean,
     darkTheme: Boolean,
+    orientation: ReadingOrientation,
     onToggleShelf: () -> Unit,
     onShowShelf: () -> Unit,
     onShowHistory: () -> Unit,
@@ -619,6 +650,7 @@ private fun ReaderScreen(
     onFontChoice: (ReaderFontChoice) -> Unit,
     onThemeMode: (ReaderThemeMode) -> Unit,
     onRestReminder: (Int) -> Unit,
+    onToggleOrientation: () -> Unit,
     onViewportChanged: (Float, Float) -> Unit
 ) {
     var controlsVisible by rememberSaveable { mutableStateOf(true) }
@@ -633,6 +665,14 @@ private fun ReaderScreen(
     val currentPosition = ReadingPosition(state.chapterIndex, state.pageIndex)
     val currentBookmarked = currentPosition in state.bookmarks
     var clockMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    val contentBlur by animateFloatAsState(
+        targetValue = if (controlsVisible) 2.5f else 0f,
+        label = "content blur"
+    )
+    val bottomBarHeight by animateDpAsState(
+        targetValue = if (controlsVisible) 80.dp else 0.dp,
+        label = "bottom bar height"
+    )
 
     LaunchedEffect(state.sessionStartedAt) {
         while (true) {
@@ -757,15 +797,28 @@ private fun ReaderScreen(
             }
         )
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            if (controlsVisible) {
-                Column(
+            AnimatedVisibility(
+                visible = controlsVisible,
+                enter = expandHorizontally(expandFrom = Alignment.Start) + fadeIn(),
+                exit = shrinkHorizontally(shrinkTowards = Alignment.Start) + fadeOut()
+            ) {
+                Box(
                     modifier = Modifier
                         .width(IntrinsicSize.Max)
                         .widthIn(min = 132.dp, max = 180.dp)
                         .fillMaxHeight()
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                    verticalArrangement = Arrangement.SpaceBetween
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .pointerInput(Unit) {
+                            detectHorizontalDragGestures { change, dragAmount ->
+                                change.consume()
+                                if (dragAmount < -8f) controlsVisible = false
+                            }
+                        }
                 ) {
+                    Column(
+                        modifier = Modifier.fillMaxHeight(),
+                        verticalArrangement = Arrangement.SpaceBetween
+                    ) {
                     Column(
                         modifier = Modifier.padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
@@ -796,11 +849,29 @@ private fun ReaderScreen(
                             style = MaterialTheme.typography.labelSmall
                         )
                     }
+                    }
+                    IconButton(
+                        onClick = { controlsVisible = false },
+                        modifier = Modifier.align(Alignment.TopEnd).size(28.dp)
+                    ) {
+                        Text("‹", style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                    }
                 }
             }
             BoxWithConstraints(
                 modifier = Modifier.weight(1f).fillMaxHeight().padding(16.dp)
                     .background(if (darkTheme) Color(0xFF171512) else Color.White)
+                    .graphicsLayer {
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && contentBlur > 0f) {
+                            renderEffect = RenderEffect.createBlurEffect(
+                                contentBlur,
+                                contentBlur,
+                                Shader.TileMode.CLAMP
+                            ).asComposeRenderEffect()
+                        } else {
+                            renderEffect = null
+                        }
+                    }
                     .pointerInput(state.chapterIndex, state.pageIndex) {
                         awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false)
@@ -857,7 +928,7 @@ private fun ReaderScreen(
             }
         }
         Box(
-            modifier = Modifier.fillMaxWidth().height(80.dp).background(MaterialTheme.colorScheme.background)
+            modifier = Modifier.fillMaxWidth().height(bottomBarHeight).background(MaterialTheme.colorScheme.background)
         ) {
             if (controlsVisible) {
                 BottomAppBar(modifier = Modifier.fillMaxSize()) {
@@ -873,10 +944,15 @@ private fun ReaderScreen(
                         Text("下拉添加书签 · 上拉取消", style = MaterialTheme.typography.bodySmall)
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Box {
-                                OutlinedButton(onClick = {
+                                IconButton(onClick = {
                                     showReaderControls()
                                     showSettingsMenu = true
-                                }) { Text("设置") }
+                                }) {
+                                    Icon(
+                                        painter = painterResource(com.myreading.R.drawable.setting),
+                                        contentDescription = "设置"
+                                    )
+                                }
                                 DropdownMenu(
                                     expanded = showSettingsMenu,
                                     onDismissRequest = { showSettingsMenu = false }
@@ -896,6 +972,12 @@ private fun ReaderScreen(
                                         }
                                     )
                                 }
+                            }
+                            IconButton(onClick = onToggleOrientation) {
+                                Icon(
+                                    painter = painterResource(com.myreading.R.drawable.switch_icon),
+                                    contentDescription = if (orientation == ReadingOrientation.VERTICAL) "切换横版" else "切换竖版"
+                                )
                             }
                             OutlinedButton(onClick = onPreviousPage) { Text("上一页") }
                             OutlinedButton(onClick = onNextPage) { Text("下一页") }

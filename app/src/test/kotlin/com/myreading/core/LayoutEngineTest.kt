@@ -112,6 +112,40 @@ class LayoutEngineTest {
     }
 
     @Test
+    fun arabicDigitsStayAsOneReadableToken() {
+        val fragments = layoutTextFragments(
+            """
+            <html xmlns="http://www.w3.org/1999/xhtml">
+              <body style="writing-mode: vertical-rl;"><p>编号123完</p></body>
+            </html>
+            """.trimIndent()
+        )
+
+        val number = fragments.first { it.sourceText == "123" }
+        assertEquals("123", number.displayText)
+        assertEquals(1, fragments.count { it.sourceText == "123" })
+    }
+
+    @Test
+    fun horizontalOrientationLaysTextAcrossTheLine() {
+        val pages = layoutPages(
+            """
+            <html xmlns="http://www.w3.org/1999/xhtml">
+              <body><p>甲乙丙</p></body>
+            </html>
+            """.trimIndent(),
+            title = "",
+            orientation = ReadingOrientation.HORIZONTAL
+        )
+        val fragments = pages.flatMap { it.columns }.flatMap { it.fragments }
+            .filterIsInstance<LayoutFragment.Text>()
+
+        assertEquals(listOf("甲", "乙", "丙"), fragments.map { it.displayText })
+        assertTrue(fragments[1].x > fragments[0].x)
+        assertEquals(fragments[0].y, fragments[1].y, 0.01f)
+    }
+
+    @Test
     fun paragraphsStartInSeparateIndentedColumns() {
         val pages = layoutPages(
             """
@@ -156,7 +190,11 @@ class LayoutEngineTest {
         return layoutPages(html).flatMap { it.columns }.flatMap { it.fragments }
     }
 
-    private fun layoutPages(html: String, title: String = ""): List<PageLayout> {
+    private fun layoutPages(
+        html: String,
+        title: String = "",
+        orientation: ReadingOrientation = ReadingOrientation.VERTICAL
+    ): List<PageLayout> {
         val chapter = Chapter(
             id = "chap",
             href = "chapter.xhtml",
@@ -166,7 +204,7 @@ class LayoutEngineTest {
             content = html.encodeToByteArray(),
             referencedResourceHrefs = emptySet()
         )
-        return engine.layoutChapter(chapter, stylesheet, settings)
+        return engine.layoutChapter(chapter, stylesheet, settings.copy(orientation = orientation))
     }
 
     private fun layoutRubyFragment(html: String): LayoutFragment.Ruby {

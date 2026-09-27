@@ -32,7 +32,8 @@ enum class ReaderFontChoice(
 data class ReaderPreferences(
     val themeMode: ReaderThemeMode = ReaderThemeMode.SYSTEM,
     val fontChoice: ReaderFontChoice = ReaderFontChoice.SYSTEM,
-    val restReminderMinutes: Int = 0
+    val restReminderMinutes: Int = 0,
+    val orientation: ReadingOrientation = ReadingOrientation.VERTICAL
 )
 
 class ReaderPreferencesStore(context: Context) {
@@ -43,7 +44,12 @@ class ReaderPreferencesStore(context: Context) {
         fontChoice = ReaderFontChoice.fromStorage(preferences.getString(KEY_FONT, null)),
         restReminderMinutes = preferences.getInt(KEY_REST_REMINDER, 0).takeIf {
             it in SUPPORTED_REMINDER_MINUTES
-        } ?: 0
+        } ?: 0,
+        orientation = if (preferences.getString(KEY_ORIENTATION, ReadingOrientation.VERTICAL.name) == ReadingOrientation.HORIZONTAL.name) {
+            ReadingOrientation.HORIZONTAL
+        } else {
+            ReadingOrientation.VERTICAL
+        }
     )
 
     fun setTheme(mode: ReaderThemeMode) {
@@ -59,6 +65,10 @@ class ReaderPreferencesStore(context: Context) {
         preferences.edit().putInt(KEY_REST_REMINDER, minutes).apply()
     }
 
+    fun setOrientation(orientation: ReadingOrientation) {
+        preferences.edit().putString(KEY_ORIENTATION, orientation.name).apply()
+    }
+
     companion object {
         val SUPPORTED_REMINDER_MINUTES = setOf(0, 15, 30, 45, 60)
 
@@ -66,5 +76,6 @@ class ReaderPreferencesStore(context: Context) {
         private const val KEY_THEME = "theme"
         private const val KEY_FONT = "font"
         private const val KEY_REST_REMINDER = "rest-reminder-minutes"
+        private const val KEY_ORIENTATION = "orientation"
     }
 }

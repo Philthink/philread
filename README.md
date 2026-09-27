@@ -165,6 +165,43 @@ flowchart LR
 **Affected Modules** – `ReaderPreferencesStore`, `ReaderViewModel`, `ReaderApp`, and
 `VerticalLayoutEngine` pagination settings.
 
+## Layout mode and transitions
+
+**Feature** – The sidebar can be collapsed with a compact arrow or by swiping it
+left. Its width, the bottom bar, and the reading viewport transition together. The
+page fades through a small native blur while controls open or close. The bottom bar
+also provides a persisted vertical/horizontal layout switch. Horizontal mode uses
+native horizontal coordinates; it does not rotate the Canvas. Consecutive ASCII
+digits remain one readable token, so values such as `123` are not converted into
+vertical glyph variants.
+
+**Design** – Compose visibility and size animations drive the sidebar and bottom bar
+as one state transition. On Android versions that support it, the page uses a
+`RenderEffect` blur during the transition and falls back to a clear Canvas. The
+layout engine includes a separate horizontal flow with line wrapping and page
+breaking, while the vertical flow keeps CJK punctuation, ruby, and writing-mode
+behavior unchanged. The requested PNG icons were not present in the workspace or
+the prepared SDK volume, so drawable vector fallbacks are used until those assets
+are supplied.
+
+**Call Flow**
+
+```mermaid
+flowchart LR
+    Arrow[Sidebar arrow or left swipe] --> Controls[Shared controls state]
+    Controls --> Sidebar[Animated sidebar]
+    Controls --> Bottom[Animated bottom bar]
+    Controls --> Blur[Animated page blur]
+    Switch[Layout switch icon] --> Orientation[Persist orientation]
+    Orientation --> Mode{Vertical or horizontal}
+    Mode --> Vertical[Vertical CJK layout]
+    Mode --> Horizontal[Native horizontal flow]
+    Digits[ASCII digit run] --> Token[Keep original 123 token]
+```
+
+**Affected Modules** – `ReaderApp`, `ReaderPreferencesStore`, `LayoutEngine`, and
+`LayoutEngineTest`.
+
 ## Build
 
 Use JDK 17 and the included Gradle wrapper:

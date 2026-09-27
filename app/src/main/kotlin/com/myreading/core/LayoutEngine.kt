@@ -7,6 +7,7 @@ import kotlin.math.max
 
 data class LayoutSettings(
     val fontFamily: String = "Noto Serif CJK",
+    val orientation: ReadingOrientation = ReadingOrientation.VERTICAL,
     val fontSize: Float = 20f,
     val lineHeight: Float = 1.25f,
     val columnGap: Float = 18f,
@@ -17,6 +18,11 @@ data class LayoutSettings(
     val marginBottom: Float = 24f,
     val marginLeft: Float = 24f
 )
+
+enum class ReadingOrientation {
+    VERTICAL,
+    HORIZONTAL
+}
 
 data class LayoutFingerprint(val value: String)
 
@@ -127,6 +133,9 @@ class VerticalLayoutEngine(
     }
 
     fun layoutChapter(chapter: Chapter, stylesheet: Stylesheet, settings: LayoutSettings): List<PageLayout> {
+        if (settings.orientation == ReadingOrientation.HORIZONTAL) {
+            return layoutChapterHorizontal(chapter, stylesheet, settings)
+        }
         val document = XmlSupport.parse(chapter.content)
         val body = document.getElementsByTagNameNS("*", "body").item(0) as? Element ?: return emptyList()
 
@@ -338,10 +347,132 @@ class VerticalLayoutEngine(
         return pages
     }
 
+    private fun layoutChapterHorizontal(
+        chapter: Chapter,
+        stylesheet: Stylesheet,
+        settings: LayoutSettings
+    ): List<PageLayout> {
+        val document = XmlSupport.parse(chapter.content)
+        val body = document.getElementsByTagNameNS("*", "body").item(0) as? Element ?: return emptyList()
+        val usableWidth = max(1f, settings.pageWidth - settings.marginLeft - settings.marginRight)
+        val usableHeight = max(1f, settings.pageHeight - settings.marginTop - settings.marginBottom)
+        val lineHeight = settings.fontSize * settings.lineHeight
+        val linesPerPage = max(1, floor(usableHeight / lineHeight).toInt())
+        val pages = mutableListOf<PageLayout>()
+        var currentLines = mutableListOf<ColumnLayout>()
+        var currentFragments = mutableListOf<LayoutFragment>()
+        var pageIndex = 0
+        var lineIndex = 0
+        var usedWidth = 0f
+
+        fun flushLine() {
+            if (currentFragments.isEmpty()) return
+            currentLines += ColumnLayout(
+                index = lineIndex,
+                x = settings.marginLeft,
+                y = settings.marginTop + lineIndex * lineHeight,
+                width = usableWidth,
+                height = lineHeight,
+                fragments = currentFragments.toList()
+            )
+            currentFragments = mutableListOf()
+        }
+
+        fun flushPage() {
+            flushLine()
+            if (currentLines.isEmpty()) return
+            pages += PageLayout(pageIndex, currentLines.toList())
+            currentLines = mutableListOf()
+        }
+
+        fun newLine() {
+            flushLine()
+            if (lineIndex + 1 >= linesPerPage) {
+                flushPage()
+                pageIndex += 1
+                lineIndex = 0
+            } else {
+                lineIndex += 1
+            }
+            usedWidth = 0f
+        }
+
+        fun appendText(text: String, style: InlineStyleState, fontSize: Float = style.resolvedFontSize(settings)) {
+            VerticalTypography.tokenize(text, style, vertical = false).forEachIndexed { index, token ->
+                val advance = token.advanceHorizontal(fontSize)
+                if (usedWidth > 0f && usedWidth + advance > usableWidth) newLine()
+                currentFragments += LayoutFragment.Text(
+                    unitId = "h$pageIndex$lineIndex${currentFragments.size}$index",
+                    sourceText = token.source,
+                    displayText = token.display,
+                    x = settings.marginLeft + usedWidth,
+                    y = settings.marginTop + lineIndex * lineHeight,
+                    fontSize = fontSize,
+                    lineHeight = settings.lineHeight,
+                    combineUpright = false,
+                    punctuation = false,
+                    textOrientationUpright = true
+                )
+                usedWidth += advance
+            }
+        }
+
+        fun walk(node: Node, inherited: InlineStyleState) {
+            when (node.nodeType) {
+                Node.TEXT_NODE -> appendText(normalizeWhitespace(node.textContent), inherited)
+                Node.ELEMENT_NODE -> {
+                    val element = node as Element
+                    val localName = XmlSupport.localName(element).lowercase()
+                    val nextState = resolveStyle(element, stylesheet, inherited, settings)
+                    when {
+                        localName == "br" -> newLine()
+                        localName == "img" -> {
+                            val size = nextState.resolvedFontSize(settings) * 2f
+                            if (usedWidth > 0f && usedWidth + size > usableWidth) newLine()
+                            currentFragments += LayoutFragment.Image(
+                                unitId = "hi$pageIndex$lineIndex${currentFragments.size}",
+                                resourceHref = element.getAttribute("src"),
+                                x = settings.marginLeft + usedWidth,
+                                y = settings.marginTop + lineIndex * lineHeight,
+                                width = size,
+                                height = size
+                            )
+                            usedWidth += size
+                        }
+                        isHeadingElement(element) -> {
+                            if (currentFragments.isNotEmpty()) newLine()
+                            val scale = if (localName == "h1") 1.6f else 1.4f
+                            val headingState = nextState.copy(fontSize = max(nextState.resolvedFontSize(settings), settings.fontSize * scale))
+                            for (child in XmlSupport.children(element)) walk(child, headingState)
+                            newLine()
+                        }
+                        isParagraphElement(element) -> {
+                            if (currentFragments.isNotEmpty()) newLine()
+                            for (child in XmlSupport.children(element)) walk(child, nextState)
+                            newLine()
+                        }
+                        else -> for (child in XmlSupport.children(element)) walk(child, nextState)
+                    }
+                }
+            }
+        }
+
+        val rootState = resolveStyle(body, stylesheet, InlineStyleState(), settings)
+        val hasBodyHeading = (1..6).any { body.getElementsByTagNameNS("*", "h$it").length > 0 }
+        if (!hasBodyHeading && chapter.title.isNotBlank()) {
+            appendText(chapter.title, rootState.copy(fontSize = settings.fontSize * 1.6f), settings.fontSize * 1.6f)
+            newLine()
+        }
+        for (child in XmlSupport.children(body)) walk(child, rootState)
+        flushPage()
+        return pages
+    }
+
     private fun fingerprint(chapter: Chapter, stylesheet: Stylesheet, settings: LayoutSettings): String {
         val raw = buildString {
             append(chapter.id).append('|')
             append(settings.fontFamily).append('|')
+            append(settings.orientation).append('|')
             append(settings.fontSize).append('|')
             append(settings.lineHeight).append('|')
             append(settings.columnGap).append('|')
@@ -706,6 +837,17 @@ class VerticalLayoutEngine(
                 else -> fontSize * settings.lineHeight
             }
         }
+
+        fun advanceHorizontal(fontSize: Float): Float {
+            if (source.isBlank()) return fontSize * 0.5f
+            return if (source.codePointCount(0, source.length) > 1) {
+                source.codePointCount(0, source.length) * fontSize * 0.56f
+            } else if (VerticalTypography.isAsciiAlnum(source.codePointAt(0))) {
+                fontSize * 0.56f
+            } else {
+                fontSize
+            }
+        }
     }
 
     private object VerticalTypography {
@@ -765,12 +907,25 @@ class VerticalLayoutEngine(
             '…' to '︙'
         )
 
-        fun tokenize(text: String, style: InlineStyleState): List<InlineToken> {
+        fun tokenize(text: String, style: InlineStyleState, vertical: Boolean = true): List<InlineToken> {
             val tokens = mutableListOf<InlineToken>()
             var index = 0
             while (index < text.length) {
                 val codePoint = text.codePointAt(index)
                 val charCount = Character.charCount(codePoint)
+
+                if (!vertical) {
+                    val raw = String(Character.toChars(codePoint))
+                    tokens += InlineToken(
+                        source = raw,
+                        display = raw,
+                        combineUpright = false,
+                        punctuation = false,
+                        textOrientationUpright = true
+                    )
+                    index += charCount
+                    continue
+                }
 
                 when {
                     Character.isWhitespace(codePoint) -> {
@@ -782,6 +937,21 @@ class VerticalLayoutEngine(
                             textOrientationUpright = style.textOrientationUpright
                         )
                         index += charCount
+                    }
+
+                    isAsciiDigit(codePoint) -> {
+                        val start = index
+                        while (index < text.length && isAsciiDigit(text.codePointAt(index))) {
+                            index += Character.charCount(text.codePointAt(index))
+                        }
+                        val raw = text.substring(start, index)
+                        tokens += InlineToken(
+                            source = raw,
+                            display = raw,
+                            combineUpright = false,
+                            punctuation = false,
+                            textOrientationUpright = true
+                        )
                     }
 
                     style.combineUpright && shouldCombine(codePoint, style) -> {
@@ -853,6 +1023,8 @@ class VerticalLayoutEngine(
                 codePoint in 'a'.code..'z'.code ||
                 codePoint in 'A'.code..'Z'.code
         }
+
+        private fun isAsciiDigit(codePoint: Int): Boolean = codePoint in '0'.code..'9'.code
 
         fun isHorizontalPunctuation(codePoint: Int): Boolean {
             return when (codePoint.toChar()) {
