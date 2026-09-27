@@ -9,7 +9,8 @@ import java.util.zip.ZipFile
 
 class EpubParser {
     fun parse(epubFile: File): Book {
-        ZipFile(epubFile).use { archive ->
+        // Use UTF‑8 charset for ZIP entries to correctly handle non‑ASCII filenames
+        ZipFile(epubFile, Charsets.UTF_8).use { archive ->
             val issues = mutableListOf<ParseIssue>()
             val rootfilePath = readRootfilePath(archive)
             val opfBytes = readBytes(archive, rootfilePath)

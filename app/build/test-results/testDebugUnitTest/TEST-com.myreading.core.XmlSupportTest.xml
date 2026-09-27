@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.myreading.core.XmlSupportTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-09-27T09:59:28.804Z" hostname="MacBook-Pro" time="0.001">
+  <properties/>
+  <testcase name="parsesNamespacedUtf8Xml" classname="com.myreading.core.XmlSupportTest" time="0.001"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
