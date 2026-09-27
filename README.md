@@ -175,14 +175,15 @@ native horizontal coordinates; it does not rotate the Canvas. Consecutive ASCII
 digits remain one readable token, so values such as `123` are not converted into
 vertical glyph variants.
 
-**Design** – Compose visibility and size animations drive the sidebar and bottom bar
-as one state transition. On Android versions that support it, the page uses a
-`RenderEffect` blur during the transition and falls back to a clear Canvas. The
-layout engine includes a separate horizontal flow with line wrapping and page
-breaking, while the vertical flow keeps CJK punctuation, ruby, and writing-mode
-behavior unchanged. The requested PNG icons were not present in the workspace or
-the prepared SDK volume, so drawable vector fallbacks are used until those assets
-are supplied.
+**Design** – A lightweight width and alpha animation drives the sidebar and bottom
+bar as one state transition, with the arrow centered on the sidebar edge. On
+Android versions that support it, the page uses a short-lived `RenderEffect` blur
+only while the viewport is changing, then returns to a clear Canvas. The layout
+engine includes a separate horizontal flow with line wrapping and page breaking,
+while the vertical flow keeps CJK punctuation, ruby, and writing-mode behavior
+unchanged. The supplied settings and orientation PNGs are downscaled to 96px
+thumbnails in `drawable-nodpi` so the original 2048px files are not decoded at
+runtime.
 
 **Call Flow**
 

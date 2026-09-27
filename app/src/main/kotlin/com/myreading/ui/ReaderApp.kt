@@ -8,11 +8,6 @@ import android.graphics.Shader
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandHorizontally
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -665,8 +660,16 @@ private fun ReaderScreen(
     val currentPosition = ReadingPosition(state.chapterIndex, state.pageIndex)
     val currentBookmarked = currentPosition in state.bookmarks
     var clockMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    val sidebarWidth by animateDpAsState(
+        targetValue = if (controlsVisible) 150.dp else 0.dp,
+        label = "sidebar width"
+    )
+    val sidebarAlpha by animateFloatAsState(
+        targetValue = if (controlsVisible) 1f else 0f,
+        label = "sidebar alpha"
+    )
     val contentBlur by animateFloatAsState(
-        targetValue = if (controlsVisible) 2.5f else 0f,
+        targetValue = if (sidebarWidth > 1.dp && sidebarWidth < 149.dp) 2.5f else 0f,
         label = "content blur"
     )
     val bottomBarHeight by animateDpAsState(
@@ -797,24 +800,22 @@ private fun ReaderScreen(
             }
         )
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            AnimatedVisibility(
-                visible = controlsVisible,
-                enter = expandHorizontally(expandFrom = Alignment.Start) + fadeIn(),
-                exit = shrinkHorizontally(shrinkTowards = Alignment.Start) + fadeOut()
-            ) {
-                Box(
-                    modifier = Modifier
-                        .width(IntrinsicSize.Max)
-                        .widthIn(min = 132.dp, max = 180.dp)
-                        .fillMaxHeight()
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .pointerInput(Unit) {
-                            detectHorizontalDragGestures { change, dragAmount ->
-                                change.consume()
-                                if (dragAmount < -8f) controlsVisible = false
-                            }
+            Box(
+                modifier = Modifier
+                    .width(sidebarWidth)
+                    .fillMaxHeight()
+                    .graphicsLayer {
+                        alpha = sidebarAlpha
+                        clip = true
+                    }
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    .pointerInput(Unit) {
+                        detectHorizontalDragGestures { change, dragAmount ->
+                            change.consume()
+                            if (dragAmount < -8f) controlsVisible = false
                         }
-                ) {
+                    }
+            ) {
                     Column(
                         modifier = Modifier.fillMaxHeight(),
                         verticalArrangement = Arrangement.SpaceBetween
@@ -850,12 +851,11 @@ private fun ReaderScreen(
                         )
                     }
                     }
-                    IconButton(
-                        onClick = { controlsVisible = false },
-                        modifier = Modifier.align(Alignment.TopEnd).size(28.dp)
-                    ) {
-                        Text("‹", style = MaterialTheme.typography.titleMedium, maxLines = 1)
-                    }
+                IconButton(
+                    onClick = { controlsVisible = false },
+                    modifier = Modifier.align(Alignment.CenterEnd).size(36.dp)
+                ) {
+                    Text("‹", style = MaterialTheme.typography.headlineSmall, maxLines = 1)
                 }
             }
             BoxWithConstraints(
