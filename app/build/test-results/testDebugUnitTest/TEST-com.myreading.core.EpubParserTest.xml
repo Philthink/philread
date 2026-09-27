@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.myreading.core.EpubParserTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-09-27T09:59:27.603Z" hostname="MacBook-Pro" time="0.002">
+<testsuite name="com.myreading.core.EpubParserTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-09-27T14:56:15.827Z" hostname="MacBook-Pro" time="0.002">
   <properties/>
   <testcase name="parseRealVerticalBook" classname="com.myreading.core.EpubParserTest" time="0.002"/>
   <system-out><![CDATA[EPUB file not found, skipping test

@@ -1,70 +1,86 @@
 [
     {
-        "merged": "com.myreading.app-debug-4:/mipmap-mdpi_ic_launcher_foreground.png.flat",
-        "source": "com.myreading.app-main-6:/mipmap-mdpi/ic_launcher_foreground.png"
+        "merged": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-debug-63:/mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-main-65:/mipmap-anydpi-v26/ic_launcher.xml"
     },
     {
-        "merged": "com.myreading.app-debug-4:/mipmap-hdpi_ic_launcher_foreground.png.flat",
-        "source": "com.myreading.app-main-6:/mipmap-hdpi/ic_launcher_foreground.png"
+        "merged": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-debug-63:/drawable-nodpi_setting.png.flat",
+        "source": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-main-65:/drawable-nodpi/setting.png"
     },
     {
-        "merged": "com.myreading.app-debug-4:/mipmap-xxxhdpi_ic_launcher_foreground.png.flat",
-        "source": "com.myreading.app-main-6:/mipmap-xxxhdpi/ic_launcher_foreground.png"
+        "merged": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-debug-63:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
+        "source": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-main-65:/mipmap-anydpi-v26/ic_launcher_round.xml"
     },
     {
-        "merged": "com.myreading.app-debug-4:/mipmap-mdpi_ic_launcher_round.png.flat",
-        "source": "com.myreading.app-main-6:/mipmap-mdpi/ic_launcher_round.png"
+        "merged": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-debug-63:/mipmap-mdpi_ic_launcher.png.flat",
+        "source": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-main-65:/mipmap-mdpi/ic_launcher.png"
     },
     {
-        "merged": "com.myreading.app-debug-4:/mipmap-xxhdpi_ic_launcher.png.flat",
-        "source": "com.myreading.app-main-6:/mipmap-xxhdpi/ic_launcher.png"
+        "merged": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-debug-63:/mipmap-mdpi_ic_launcher_round.png.flat",
+        "source": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-main-65:/mipmap-mdpi/ic_launcher_round.png"
     },
     {
-        "merged": "com.myreading.app-debug-4:/mipmap-xhdpi_ic_launcher_foreground.png.flat",
-        "source": "com.myreading.app-main-6:/mipmap-xhdpi/ic_launcher_foreground.png"
+        "merged": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-debug-63:/mipmap-xxhdpi_ic_launcher_foreground.png.flat",
+        "source": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-main-65:/mipmap-xxhdpi/ic_launcher_foreground.png"
     },
     {
-        "merged": "com.myreading.app-debug-4:/mipmap-xxhdpi_ic_launcher_foreground.png.flat",
-        "source": "com.myreading.app-main-6:/mipmap-xxhdpi/ic_launcher_foreground.png"
+        "merged": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-debug-63:/mipmap-xhdpi_ic_launcher.png.flat",
+        "source": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-main-65:/mipmap-xhdpi/ic_launcher.png"
     },
     {
-        "merged": "com.myreading.app-debug-4:/mipmap-anydpi-v26_ic_launcher.xml.flat",
-        "source": "com.myreading.app-main-6:/mipmap-anydpi-v26/ic_launcher.xml"
+        "merged": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-debug-63:/drawable-nodpi_switch_icon.png.flat",
+        "source": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-main-65:/drawable-nodpi/switch_icon.png"
     },
     {
-        "merged": "com.myreading.app-debug-4:/mipmap-hdpi_ic_launcher.png.flat",
-        "source": "com.myreading.app-main-6:/mipmap-hdpi/ic_launcher.png"
+        "merged": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-debug-63:/mipmap-xxxhdpi_ic_launcher.png.flat",
+        "source": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-main-65:/mipmap-xxxhdpi/ic_launcher.png"
     },
     {
-        "merged": "com.myreading.app-debug-4:/mipmap-mdpi_ic_launcher.png.flat",
-        "source": "com.myreading.app-main-6:/mipmap-mdpi/ic_launcher.png"
+        "merged": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-debug-63:/mipmap-hdpi_ic_launcher_foreground.png.flat",
+        "source": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-main-65:/mipmap-hdpi/ic_launcher_foreground.png"
     },
     {
-        "merged": "com.myreading.app-debug-4:/mipmap-anydpi-v26_ic_launcher_round.xml.flat",
-        "source": "com.myreading.app-main-6:/mipmap-anydpi-v26/ic_launcher_round.xml"
+        "merged": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-debug-63:/mipmap-xxhdpi_ic_launcher_round.png.flat",
+        "source": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-main-65:/mipmap-xxhdpi/ic_launcher_round.png"
     },
     {
-        "merged": "com.myreading.app-debug-4:/mipmap-xhdpi_ic_launcher.png.flat",
-        "source": "com.myreading.app-main-6:/mipmap-xhdpi/ic_launcher.png"
+        "merged": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-debug-63:/mipmap-xhdpi_ic_launcher_round.png.flat",
+        "source": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-main-65:/mipmap-xhdpi/ic_launcher_round.png"
     },
     {
-        "merged": "com.myreading.app-debug-4:/mipmap-hdpi_ic_launcher_round.png.flat",
-        "source": "com.myreading.app-main-6:/mipmap-hdpi/ic_launcher_round.png"
+        "merged": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-debug-63:/mipmap-xxxhdpi_ic_launcher_foreground.png.flat",
+        "source": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-main-65:/mipmap-xxxhdpi/ic_launcher_foreground.png"
     },
     {
-        "merged": "com.myreading.app-debug-4:/mipmap-xxhdpi_ic_launcher_round.png.flat",
-        "source": "com.myreading.app-main-6:/mipmap-xxhdpi/ic_launcher_round.png"
+        "merged": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-debug-63:/mipmap-xhdpi_ic_launcher_foreground.png.flat",
+        "source": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-main-65:/mipmap-xhdpi/ic_launcher_foreground.png"
     },
     {
-        "merged": "com.myreading.app-debug-4:/mipmap-xhdpi_ic_launcher_round.png.flat",
-        "source": "com.myreading.app-main-6:/mipmap-xhdpi/ic_launcher_round.png"
+        "merged": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-debug-63:/mipmap-xxhdpi_ic_launcher.png.flat",
+        "source": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-main-65:/mipmap-xxhdpi/ic_launcher.png"
     },
     {
-        "merged": "com.myreading.app-debug-4:/mipmap-xxxhdpi_ic_launcher_round.png.flat",
-        "source": "com.myreading.app-main-6:/mipmap-xxxhdpi/ic_launcher_round.png"
+        "merged": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-debug-63:/mipmap-mdpi_ic_launcher_foreground.png.flat",
+        "source": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-main-65:/mipmap-mdpi/ic_launcher_foreground.png"
     },
     {
-        "merged": "com.myreading.app-debug-4:/mipmap-xxxhdpi_ic_launcher.png.flat",
-        "source": "com.myreading.app-main-6:/mipmap-xxxhdpi/ic_launcher.png"
+        "merged": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-debug-63:/mipmap-hdpi_ic_launcher.png.flat",
+        "source": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-main-65:/mipmap-hdpi/ic_launcher.png"
+    },
+    {
+        "merged": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-debug-63:/mipmap-hdpi_ic_launcher_round.png.flat",
+        "source": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-main-65:/mipmap-hdpi/ic_launcher_round.png"
+    },
+    {
+        "merged": "com.myreading.app-debug-63:/drawable-nodpi_setting.png.flat",
+        "source": "com.myreading.app-main-65:/drawable-nodpi/setting.png"
+    },
+    {
+        "merged": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-debug-63:/mipmap-xxxhdpi_ic_launcher_round.png.flat",
+        "source": "/Users/hubosen/.gradle/daemon/8.14.5/com.myreading.app-main-65:/mipmap-xxxhdpi/ic_launcher_round.png"
+    },
+    {
+        "merged": "com.myreading.app-debug-63:/drawable-nodpi_switch_icon.png.flat",
+        "source": "com.myreading.app-main-65:/drawable-nodpi/switch_icon.png"
     }
 ]

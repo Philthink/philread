@@ -1,10 +1,15 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.myreading.core.LayoutEngineTest" tests="6" skipped="0" failures="0" errors="0" timestamp="2026-09-27T09:59:27.607Z" hostname="MacBook-Pro" time="0.054">
+<testsuite name="com.myreading.core.LayoutEngineTest" tests="11" skipped="0" failures="0" errors="0" timestamp="2026-09-27T14:56:15.887Z" hostname="MacBook-Pro" time="0.021">
   <properties/>
-  <testcase name="chapterTitleUsesLargerIndependentColumn" classname="com.myreading.core.LayoutEngineTest" time="0.041"/>
-  <testcase name="rubyPositionOverAndUnderRespectStyle" classname="com.myreading.core.LayoutEngineTest" time="0.006"/>
+  <testcase name="chapterTitleUsesLargerIndependentColumn" classname="com.myreading.core.LayoutEngineTest" time="0.002"/>
+  <testcase name="rubyPositionOverAndUnderRespectStyle" classname="com.myreading.core.LayoutEngineTest" time="0.005"/>
+  <testcase name="horizontalParagraphIndentAppliesOnlyToFirstLine" classname="com.myreading.core.LayoutEngineTest" time="0.002"/>
+  <testcase name="arabicDigitsStayAsOneReadableToken" classname="com.myreading.core.LayoutEngineTest" time="0.001"/>
   <testcase name="verticalPunctuationMapsAsciiMarks" classname="com.myreading.core.LayoutEngineTest" time="0.002"/>
-  <testcase name="textOrientationUprightKeepsAsciiFullHeight" classname="com.myreading.core.LayoutEngineTest" time="0.003"/>
+  <testcase name="textOrientationUprightKeepsAsciiFullHeight" classname="com.myreading.core.LayoutEngineTest" time="0.002"/>
+  <testcase name="largeHeadingsReserveTheirActualHeightAndWidth" classname="com.myreading.core.LayoutEngineTest" time="0.003"/>
+  <testcase name="horizontalOrientationLaysTextAcrossTheLine" classname="com.myreading.core.LayoutEngineTest" time="0.001"/>
+  <testcase name="remAndMalformedFontSizesDoNotCrashPagination" classname="com.myreading.core.LayoutEngineTest" time="0.001"/>
   <testcase name="rubyPositionRightPlacesAnnotationBesideBase" classname="com.myreading.core.LayoutEngineTest" time="0.001"/>
   <testcase name="paragraphsStartInSeparateIndentedColumns" classname="com.myreading.core.LayoutEngineTest" time="0.001"/>
   <system-out><![CDATA[]]></system-out>

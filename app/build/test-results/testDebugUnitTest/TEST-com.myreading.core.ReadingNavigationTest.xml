@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.myreading.core.ReadingNavigationTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-09-27T09:59:27.664Z" hostname="MacBook-Pro" time="1.139">
+<testsuite name="com.myreading.core.ReadingNavigationTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-09-27T14:56:15.911Z" hostname="MacBook-Pro" time="0.676">
   <properties/>
-  <testcase name="nextPageCrossesToNextChapterAndSkipsEmptyChapters" classname="com.myreading.core.ReadingNavigationTest" time="0.0"/>
-  <testcase name="pageNavigationStopsAtBookBoundaries" classname="com.myreading.core.ReadingNavigationTest" time="0.001"/>
-  <testcase name="skipsSvgCoverAndStartsAtReadableChapter" classname="com.myreading.core.ReadingNavigationTest" time="1.138"/>
+  <testcase name="nextPageCrossesToNextChapterAndSkipsEmptyChapters" classname="com.myreading.core.ReadingNavigationTest" time="0.001"/>
+  <testcase name="pageNavigationStopsAtBookBoundaries" classname="com.myreading.core.ReadingNavigationTest" time="0.0"/>
+  <testcase name="skipsSvgCoverAndStartsAtReadableChapter" classname="com.myreading.core.ReadingNavigationTest" time="0.674"/>
   <testcase name="previousPageCrossesToPreviousChapterLastPageAndSkipsEmptyChapters" classname="com.myreading.core.ReadingNavigationTest" time="0.0"/>
   <system-out><![CDATA[]]></system-out>
   <system-err><![CDATA[]]></system-err>
