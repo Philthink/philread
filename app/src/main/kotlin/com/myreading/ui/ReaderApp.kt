@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.content.Intent
 import android.graphics.Typeface
+import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -29,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
@@ -39,6 +41,8 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -98,7 +102,18 @@ data class ReaderUiState(
 
 class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     private val parser = EpubParser()
-    private val layoutEngine = VerticalLayoutEngine(LayoutCache(16))
+    private val imageSizes = mutableMapOf<Resource, Pair<Float, Float>?>()
+    private val layoutEngine = VerticalLayoutEngine(LayoutCache(16)) { chapter, source ->
+        state.book?.imageResource(chapter.href, source)?.let { resource ->
+            imageSizes.getOrPut(resource) {
+                runCatching {
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    resource.openStream().use { BitmapFactory.decodeStream(it, null, bounds) }
+                    if (bounds.outWidth > 0 && bounds.outHeight > 0) bounds.outWidth.toFloat() to bounds.outHeight.toFloat() else null
+                }.getOrNull()
+            }
+        }
+    }
     private val libraryStore = LibraryStore(app)
     private val preferencesStore = ReaderPreferencesStore(app)
     private val initialPreferences = preferencesStore.load()
@@ -176,6 +191,7 @@ class ReaderViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun showBook(book: Book, record: StoredBook) {
+        imageSizes.clear()
         val chapterIndex = record.lastChapterIndex.coerceIn(0, book.chapters.lastIndex)
         state = state.copy(
             loading = false,
@@ -917,6 +933,8 @@ private fun ReaderScreen(
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("没有可显示页面") }
                     } else {
                         VerticalPageCanvas(
+                            book = state.book,
+                            chapterHref = state.book?.chapters?.getOrNull(state.chapterIndex)?.href.orEmpty(),
                             page = page,
                             fontChoice = state.fontChoice,
                             darkTheme = darkTheme,
@@ -1217,11 +1235,27 @@ private fun BookmarksDialog(
 @OptIn(androidx.compose.ui.text.ExperimentalTextApi::class)
 @Composable
 private fun VerticalPageCanvas(
+    book: Book?,
+    chapterHref: String,
     page: PageLayout,
     fontChoice: ReaderFontChoice,
     darkTheme: Boolean,
     modifier: Modifier = Modifier
 ) {
+    val images by produceState<Map<String, ImageBitmap>>(emptyMap(), book?.sourcePath, chapterHref, page) {
+        value = emptyMap()
+        if (book != null) value = withContext(Dispatchers.IO) {
+            page.columns.flatMap { it.fragments }.filterIsInstance<LayoutFragment.Image>()
+                .mapNotNull { fragment ->
+                    val resource = book.imageResource(chapterHref, fragment.resourceHref) ?: return@mapNotNull null
+                    val key = book.sourcePath + "|" + resource.href
+                    val bitmap = BookImageCache.images.get(key) ?: runCatching {
+                        decodeReadingImage { resource.openStream() }
+                    }.getOrNull()?.also { BookImageCache.images.put(key, it) }
+                    bitmap?.let { fragment.resourceHref to it }
+                }.toMap()
+        }
+    }
     val typeface = remember(fontChoice) {
         Typeface.create(fontChoice.layoutFamily, Typeface.NORMAL)
     }
@@ -1251,7 +1285,15 @@ private fun VerticalPageCanvas(
                         }
                     }
                     is LayoutFragment.Image -> {
-                        drawRect(
+                        val bitmap = images[fragment.resourceHref]
+                        if (bitmap != null) {
+                            val scale = minOf(fragment.width / bitmap.width, fragment.height / bitmap.height)
+                            val width = (bitmap.width * scale).toInt().coerceAtLeast(1)
+                            val height = (bitmap.height * scale).toInt().coerceAtLeast(1)
+                            drawImage(bitmap,
+                                dstOffset = IntOffset((fragment.x + (fragment.width - width) / 2).toInt(), fragment.y.toInt()),
+                                dstSize = IntSize(width, height))
+                        } else drawRect(
                             color = Color(0xFFE0D8CC),
                             topLeft = Offset(fragment.x, fragment.y),
                             size = androidx.compose.ui.geometry.Size(fragment.width, fragment.height)

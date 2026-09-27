@@ -243,6 +243,36 @@ flowchart LR
 **Affected Modules** - `LayoutEngine`, `ReadingAppearance`, `ReaderPreferencesStore`,
 `ReaderApp`, `ReadingBackground`, and layout regression tests.
 
+## Book photos and background image fixes
+
+**Feature** - Book photos now render in both reading directions, preserving aspect
+ratio and reserving page space. Relative image paths and raster images referenced
+by SVG `image` elements are supported; general SVG vector rendering is not yet
+implemented. Custom background image buttons are compact and centered, with a
+preview and a reminder to confirm settings.
+
+**Design** - A shared sampled bitmap decoder starts its sample size at one, fixing
+the zero-division failure that prevented background photos from appearing. Pixel
+decoding runs on the IO dispatcher; book images use a bounded 24MB cache. Layout
+uses intrinsic image dimensions and fits images within the page without stretching.
+Unreadable images retain a placeholder or the selected background color.
+
+**Call Flow**
+
+```mermaid
+flowchart LR
+    EPUB[Chapter image reference] --> Resolve[Resolve resource path]
+    Resolve --> Bounds[Read intrinsic bounds]
+    Bounds --> Layout[Reserve proportional page space]
+    Resolve --> Decode[Sample bitmap on IO thread]
+    Picker[Background photo picker] --> Decode
+    Decode --> Canvas[Draw photo in Compose]
+    Layout --> Canvas
+```
+
+**Affected Modules** - `ImageSupport`, `LayoutEngine`, `BookImages`, `ReaderApp`,
+`ReadingBackground`, and `ImageSupportTest`.
+
 ## Build
 
 Use JDK 17 and the included Gradle wrapper:

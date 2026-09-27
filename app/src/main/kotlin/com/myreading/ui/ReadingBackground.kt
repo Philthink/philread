@@ -10,11 +10,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -31,14 +31,7 @@ internal fun Modifier.readingBackground(color: Long, uri: String, dark: Boolean)
         if (uri.isNotEmpty()) value = withContext(Dispatchers.IO) {
             runCatching {
                 val source = Uri.parse(uri)
-                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                context.contentResolver.openInputStream(source)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-                val options = BitmapFactory.Options()
-                // Bound decoding memory even when the selected photo is very large.
-                while (max(bounds.outWidth, bounds.outHeight) / options.inSampleSize > 2048) options.inSampleSize *= 2
-                context.contentResolver.openInputStream(source)?.use {
-                    BitmapFactory.decodeStream(it, null, options)?.asImageBitmap()
-                }
+                decodeReadingImage { context.contentResolver.openInputStream(source) }
             }.getOrNull()
         }
     }
@@ -50,7 +43,7 @@ internal fun Modifier.readingBackground(color: Long, uri: String, dark: Boolean)
             drawImage(it, dstOffset = IntOffset((size.width.toInt() - width) / 2, (size.height.toInt() - height) / 2),
                 dstSize = IntSize(width, height))
             // Keep text legible over photographs, including in night mode.
-            drawRect(if (dark) Color.Black.copy(alpha = 0.72f) else Color(color).copy(alpha = 0.65f))
+            drawRect(if (dark) Color.Black.copy(alpha = 0.60f) else Color(color).copy(alpha = 0.25f))
         }
     }
 }
@@ -78,10 +71,19 @@ internal fun BackgroundChoice(title: String, selected: Long, uri: String, onChan
             Text(if (selected == color && uri.isEmpty()) "$label · 已选择" else label)
         }
     }
-    OutlinedButton(onClick = { picker.launch(arrayOf("image/*")) }) {
-        Text(if (uri.isEmpty()) "自定义背景图片" else "更换背景图片（已选择）")
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+        OutlinedButton(
+            onClick = { picker.launch(arrayOf("image/*")) },
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+        ) {
+            Text(if (uri.isEmpty()) "选择图片" else "更换图片", style = MaterialTheme.typography.labelMedium)
+        }
+        if (uri.isNotEmpty()) {
+            Box(Modifier.size(width = 160.dp, height = 80.dp).readingBackground(selected, uri, false))
+            Text("点击完成后应用", style = MaterialTheme.typography.labelSmall)
+            TextButton(onClick = { onChange(selected, "") }) { Text("移除图片") }
+        }
     }
-    if (uri.isNotEmpty()) TextButton(onClick = { onChange(selected, "") }) { Text("移除背景图片") }
     error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     Spacer(Modifier.height(8.dp))
 }

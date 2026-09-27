@@ -122,8 +122,22 @@ class LayoutCache(private val capacity: Int = 16) {
 }
 
 class VerticalLayoutEngine(
-    private val cache: LayoutCache = LayoutCache()
+    private val cache: LayoutCache = LayoutCache(),
+    private val imageDimensions: (Chapter, String) -> Pair<Float, Float>? = { _, _ -> null }
 ) {
+    private fun imageHref(element: Element): String = element.getAttribute("src").ifBlank {
+        element.getAttribute("href").ifBlank { element.getAttributeNS("http://www.w3.org/1999/xlink", "href") }
+    }
+
+    private fun imageBox(chapter: Chapter, element: Element, settings: LayoutSettings): Pair<Float, Float> {
+        val intrinsic = imageDimensions(chapter, imageHref(element)) ?: (240f to 240f)
+        val width = intrinsic.first.coerceAtLeast(1f)
+        val height = intrinsic.second.coerceAtLeast(1f)
+        val scale = minOf(1f,
+            (settings.pageWidth - settings.marginLeft - settings.marginRight).coerceAtLeast(1f) / width,
+            (settings.pageHeight - settings.marginTop - settings.marginBottom).coerceAtLeast(1f) / height)
+        return width * scale to height * scale
+    }
     fun paginate(chapter: Chapter, stylesheet: Stylesheet, settings: LayoutSettings): PaginationResult {
         val fingerprint = fingerprint(chapter, stylesheet, settings)
         cache.get(fingerprint)?.let { return it }
@@ -262,21 +276,22 @@ class VerticalLayoutEngine(
                             if (usedHeight > usableHeight) newColumnOrPage()
                         }
 
-                        "img" -> {
-                            val href = element.getAttribute("src")
-                            val fontSize = inherited.resolvedFontSize(settings)
-                            val advance = max(fontSize * settings.lineHeight * 2f, fontSize * 2f)
+                        "img", "image" -> {
+                            if (currentFragments.isNotEmpty() || usedHeight > 0f) newColumnOrPage()
+                            val href = imageHref(element)
+                            val (width, height) = imageBox(chapter, element, settings)
                             append(
                                 LayoutFragment.Image(
                                     unitId = "i$pageIndex$columnIndex${currentFragments.size}",
                                     resourceHref = href,
                                     x = 0f,
                                     y = 0f,
-                                    width = fontSize * 2f,
-                                    height = fontSize * 2f
+                                    width = width,
+                                    height = height
                                 ),
-                                advance
+                                height
                             )
+                            newColumnOrPage()
                         }
 
                         "ruby" -> {
@@ -468,19 +483,26 @@ class VerticalLayoutEngine(
                     val nextState = resolveStyle(element, stylesheet, inherited, settings)
                     when {
                         localName == "br" -> newLine()
-                        localName == "img" -> {
-                            val size = nextState.resolvedFontSize(settings) * 2f
-                            if (usedWidth > 0f && usedWidth + size > usableWidth) newLine()
+                        localName == "img" || localName == "image" -> {
+                            if (currentFragments.isNotEmpty()) newLine()
+                            usedWidth = 0f
+                            val (width, height) = imageBox(chapter, element, settings)
+                            if (usedPageHeight + height > usableHeight && currentLines.isNotEmpty()) {
+                                flushPage()
+                                pageIndex += 1
+                                lineIndex = 0
+                                usedPageHeight = 0f
+                            }
                             currentFragments += LayoutFragment.Image(
                                 unitId = "hi$pageIndex$lineIndex${currentFragments.size}",
-                                resourceHref = element.getAttribute("src"),
+                                resourceHref = imageHref(element),
                                 x = settings.marginLeft + usedWidth,
                                 y = settings.marginTop + usedPageHeight,
-                                width = size,
-                                height = size
+                                width = width,
+                                height = height
                             )
-                            usedWidth += size
-                            currentLineHeight = max(currentLineHeight, size)
+                            currentLineHeight = height
+                            newLine()
                         }
                         isHeadingElement(element) -> {
                             if (currentFragments.isNotEmpty()) newLine()
